@@ -67,21 +67,24 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
       initialHand.result = 'push';
       setPlayerHands([initialHand]);
       setGameState('game_over');
-      setMessage('Both have Blackjack! Push.');
+      setMessage('🤝 Double Blackjack! Push!');
+      playSound('push');
     } else if (dTotal === 21) {
       // Dealer Wins
       initialHand.status = 'playing'; // Played but lost
       initialHand.result = 'loss';
       setPlayerHands([initialHand]);
       setGameState('game_over');
-      setMessage('Dealer has Blackjack.');
+      setMessage('🤡 Dealer has Blackjack! Unlucky!');
+      playSound('loss');
     } else if (pTotal === 21) {
       // Player Wins
       initialHand.status = 'blackjack';
       initialHand.result = 'win';
       setPlayerHands([initialHand]);
       setGameState('game_over');
-      setMessage('Blackjack! You win!');
+      setMessage('🚀 BLACKJACK! You Win! 🌕');
+      playSound('blackjack');
     }
   };
 
@@ -275,13 +278,13 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     const losses = newHands.filter(h => h.result === 'loss').length;
 
     if (wins > losses) {
-      setMessage('You Win!');
+      setMessage('🎉 HIT THE JACKPOT! You Win! 💰');
       playSound('win');
     } else if (losses > wins) {
-      setMessage('Dealer Wins.');
+      setMessage('💸 Busted! Dealer Wins. 🤡');
       playSound('loss');
     } else {
-      setMessage('Push / Break Even.');
+      setMessage('🤝 Push! Even Stevens. 😐');
       playSound('push');
     }
   };
