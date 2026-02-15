@@ -44,6 +44,7 @@ The site will be live at `https://<your-username>.github.io/Blackjack_training_p
 
 You can also trigger a deploy from the **Actions** tab → **Deploy to GitHub Pages** → **Run workflow**.
 
+
 ## Tech Stack
 
 - React 19 + TypeScript
@@ -51,6 +52,7 @@ You can also trigger a deploy from the **Actions** tab → **Deploy to GitHub Pa
 - Tailwind CSS (CDN)
 
 ## Project Structure
+
 
 ```
 ├── index.html          # Entry HTML
