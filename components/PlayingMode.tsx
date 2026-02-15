@@ -274,9 +274,16 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     const wins = newHands.filter(h => h.result === 'win').length;
     const losses = newHands.filter(h => h.result === 'loss').length;
 
-    if (wins > losses) setMessage('You Win!');
-    else if (losses > wins) setMessage('Dealer Wins.');
-    else setMessage('Push / Break Even.');
+    if (wins > losses) {
+      setMessage('You Win!');
+      playSound('win');
+    } else if (losses > wins) {
+      setMessage('Dealer Wins.');
+      playSound('loss');
+    } else {
+      setMessage('Push / Break Even.');
+      playSound('push');
+    }
   };
 
   // Render Helpers
@@ -376,7 +383,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
           {gameState === 'idle' || gameState === 'game_over' ? (
             <div className="flex justify-center">
               <button
-                onClick={dealGame}
+                onClick={() => { playSound('click'); dealGame(); }}
                 className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-12 rounded-xl text-xl shadow-lg transition-all active:scale-95"
               >
                 {gameState === 'idle' ? 'Deal Cards' : 'Play Again'}
@@ -385,10 +392,10 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
           ) : (
             <div className="flex flex-wrap gap-3 sm:gap-4 justify-center w-full max-w-2xl px-4 mx-auto">
               {/* Reuse simplified controls layout, but custom logic */}
-              <button onClick={handleHit} disabled={gameState !== 'player_turn'} className="action-btn bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-6 rounded-xl min-w-[100px] shadow-md uppercase tracking-wider">Hit</button>
-              <button onClick={handleStand} disabled={gameState !== 'player_turn'} className="action-btn bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-6 rounded-xl min-w-[100px] shadow-md uppercase tracking-wider">Stand</button>
-              <button onClick={handleDouble} disabled={!canDouble} className="action-btn bg-yellow-600 hover:bg-yellow-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-4 px-6 rounded-xl min-w-[100px] shadow-md uppercase tracking-wider">Double</button>
-              <button onClick={handleSplit} disabled={!canSplit} className="action-btn bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-4 px-6 rounded-xl min-w-[100px] shadow-md uppercase tracking-wider">Split</button>
+              <button onClick={() => { playSound('click'); handleHit(); }} disabled={gameState !== 'player_turn'} className="action-btn bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-6 rounded-xl min-w-[100px] shadow-md uppercase tracking-wider">Hit</button>
+              <button onClick={() => { playSound('click'); handleStand(); }} disabled={gameState !== 'player_turn'} className="action-btn bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-6 rounded-xl min-w-[100px] shadow-md uppercase tracking-wider">Stand</button>
+              <button onClick={() => { playSound('click'); handleDouble(); }} disabled={!canDouble} className="action-btn bg-yellow-600 hover:bg-yellow-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-4 px-6 rounded-xl min-w-[100px] shadow-md uppercase tracking-wider">Double</button>
+              <button onClick={() => { playSound('click'); handleSplit(); }} disabled={!canSplit} className="action-btn bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-4 px-6 rounded-xl min-w-[100px] shadow-md uppercase tracking-wider">Split</button>
             </div>
           )}
         </div>

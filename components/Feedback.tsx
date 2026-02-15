@@ -1,5 +1,6 @@
 import React from 'react';
 import { HandResult } from '../types';
+import { playSound } from '../utils/sound';
 
 interface FeedbackProps {
   result: HandResult | null;
@@ -26,14 +27,14 @@ const Feedback: React.FC<FeedbackProps> = ({ result, onNext }) => {
               <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
             </div>
           )}
-          
+
           <h2 className="text-2xl sm:text-3xl font-bold text-white mb-1">
             {result.isCorrect ? 'Correct!' : 'Incorrect'}
           </h2>
-          
+
           <div className="text-white/80 text-base sm:text-lg mb-4">
-             You chose <span className="font-bold text-white">{result.userAction}</span>. 
-             Strategy says <span className="font-bold underline decoration-2 underline-offset-4 text-white">{result.correctAction}</span>.
+            You chose <span className="font-bold text-white">{result.userAction}</span>.
+            Strategy says <span className="font-bold underline decoration-2 underline-offset-4 text-white">{result.correctAction}</span>.
           </div>
         </div>
 
@@ -50,28 +51,28 @@ const Feedback: React.FC<FeedbackProps> = ({ result, onNext }) => {
 
         {/* Detailed Analysis */}
         {result.analysis && (
-            <div className="bg-black/20 p-4 rounded-lg mb-4 text-left">
-              <div className="flex gap-2 text-white/90 font-semibold mb-1 text-xs uppercase tracking-wider">
-                Analysis
-              </div>
-              <div className="text-gray-300 text-sm leading-relaxed">
-                {result.analysis}
-              </div>
+          <div className="bg-black/20 p-4 rounded-lg mb-4 text-left">
+            <div className="flex gap-2 text-white/90 font-semibold mb-1 text-xs uppercase tracking-wider">
+              Analysis
             </div>
+            <div className="text-gray-300 text-sm leading-relaxed">
+              {result.analysis}
+            </div>
+          </div>
         )}
 
         {/* Example */}
         {result.example && (
-             <div className="bg-black/20 p-3 rounded-lg mb-6 text-left border border-white/5">
-                <div className="text-white/60 text-xs uppercase tracking-wider mb-1">Scenario Example</div>
-                <div className="text-emerald-300 font-mono text-sm">
-                  {result.example}
-                </div>
-             </div>
+          <div className="bg-black/20 p-3 rounded-lg mb-6 text-left border border-white/5">
+            <div className="text-white/60 text-xs uppercase tracking-wider mb-1">Scenario Example</div>
+            <div className="text-emerald-300 font-mono text-sm">
+              {result.example}
+            </div>
+          </div>
         )}
 
         <button
-          onClick={onNext}
+          onClick={() => { playSound('click'); onNext(); }}
           className="w-full bg-white text-slate-900 hover:bg-gray-100 font-bold py-3.5 px-6 rounded-xl text-lg shadow-xl hover:shadow-2xl active:scale-[0.98] transition-all focus:ring-4 focus:ring-white/30 outline-none"
         >
           Next Hand

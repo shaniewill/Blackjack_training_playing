@@ -46,6 +46,7 @@ const TrainingMode: React.FC<TrainingModeProps> = ({ onBack }) => {
     setDealerHand([d1]);
     setDeck(currentDeck);
     setGameResult(null);
+    playSound('deal');
   }, [deck]);
 
   useEffect(() => {

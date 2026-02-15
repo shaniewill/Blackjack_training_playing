@@ -1,7 +1,7 @@
 {
   "name": "blackjack-strategy-trainer",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Blackjack strategy trainer and playing simulator — H17, 6 Decks, No Surrender",
   "scripts": {
