@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Card from './Card';
+import { playSound } from '../utils/sound';
 import { createDeck, shuffleDeck, calculateHandValue, isStrictPair } from '../utils/deck';
 import { getCorrectAction } from '../utils/strategy';
 import { Card as CardType, Action, PlayerHand, GameState } from '../types';
@@ -54,6 +55,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     setActiveHandIndex(0);
     setGameState('player_turn');
     setMessage('');
+    playSound('deal');
 
     // Check Blackjacks
     const { total: pTotal } = calculateHandValue([p1, p2]);
@@ -129,6 +131,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     if (total > 21) {
       newHand.status = 'busted';
       newHand.result = 'loss';
+      playSound('bust');
 
       const newHands = [...playerHands];
       newHands[activeHandIndex] = newHand;
@@ -168,6 +171,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     if (total > 21) {
       newHand.status = 'busted';
       newHand.result = 'loss';
+      playSound('bust');
     } else {
       newHand.status = 'standing'; // Auto stand after double
     }
