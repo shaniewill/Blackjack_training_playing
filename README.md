@@ -1,20 +1,70 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Blackjack Strategy Trainer ♠️
 
-# Run and deploy your AI Studio app
+Practice and master basic blackjack strategy. Two modes: **Training** (learn optimal plays) and **Playing** (full game simulation).
 
-This contains everything you need to run your app locally.
+**Rules:** H17 · 6 Decks · No Surrender
 
-View your app in AI Studio: https://ai.studio/apps/drive/1RDu7QjwM9pKYoW-C8j6fLzzyP9e1apxX
+## Quick Start
 
-## Run Locally
+```bash
+# Install dependencies
+npm install
 
-**Prerequisites:**  Node.js
+# Start dev server (http://localhost:3000)
+npm run dev
+```
 
+## Scripts
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+| Command           | Description                          |
+| ----------------- | ------------------------------------ |
+| `npm run dev`     | Start Vite dev server on port 3000   |
+| `npm run build`   | Type-check + production build → `dist/` |
+| `npm run preview` | Preview production build locally     |
+| `npm run lint`    | Run TypeScript type-check only       |
+
+## Deployment (GitHub Pages)
+
+Deployment is **fully automatic** via GitHub Actions.
+
+### One-time setup
+
+1. Go to your repo → **Settings → Pages**
+2. Under **Source**, select **GitHub Actions**
+3. Push to `main` — the workflow builds and deploys automatically
+
+The site will be live at `https://<your-username>.github.io/Blackjack_training_playing/`
+
+> **Note:** If deploying under a subpath, set `base` in `vite.config.ts`:
+> ```ts
+> base: '/Blackjack_training_playing/',
+> ```
+
+### Manual deploy
+
+You can also trigger a deploy from the **Actions** tab → **Deploy to GitHub Pages** → **Run workflow**.
+
+## Tech Stack
+
+- React 19 + TypeScript
+- Vite 6
+- Tailwind CSS (CDN)
+
+## Project Structure
+
+```
+├── index.html          # Entry HTML
+├── index.tsx           # React entry point
+├── App.tsx             # Main app (menu / mode routing)
+├── components/
+│   ├── TrainingMode.tsx
+│   ├── PlayingMode.tsx
+│   ├── Card.tsx
+│   ├── Controls.tsx
+│   └── Feedback.tsx
+├── utils/              # Strategy logic & helpers
+├── types.ts            # Shared TypeScript types
+├── vite.config.ts
+├── tsconfig.json
+└── .github/workflows/deploy.yml
+```
