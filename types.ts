@@ -59,4 +59,4 @@ export interface PlayerHand {
   result?: 'win' | 'loss' | 'push';
 }
 
-export type GameState = 'idle' | 'dealing' | 'player_turn' | 'dealer_turn' | 'game_over';
+export type GameState = 'idle' | 'betting' | 'dealing' | 'player_turn' | 'dealer_turn' | 'game_over';

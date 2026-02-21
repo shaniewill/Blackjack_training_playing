@@ -2,8 +2,7 @@ import React, { useState, useRef } from 'react';
 import Card from './Card';
 import { playSound } from '../utils/sound';
 import { createDeck, shuffleDeck, calculateHandValue, isStrictPair } from '../utils/deck';
-import { getCorrectAction } from '../utils/strategy';
-import { Card as CardType, Action, PlayerHand, GameState } from '../types';
+import { Card as CardType, PlayerHand, GameState } from '../types';
 
 interface PlayingModeProps {
   onBack: () => void;
@@ -40,13 +39,13 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
 
   const [message, setMessage] = useState<string>('');
 
-  // ── Stats ─────────────────────────────────────────────────────────────────
-  const [stats, setStats] = useState({
-    totalDecisions: 0,
-    correctDecisions: 0,
-    currentStreak: 0,
-    bestStreak: 0,
-  });
+  // ── Chips & Betting ───────────────────────────────────────────────────────
+  const STARTING_CHIPS = 1000;
+  const CHIP_VALUES = [10, 25, 100, 500] as const;
+  const chipsRef = useRef<number>(STARTING_CHIPS);
+  const [chips, setChips] = useState<number>(STARTING_CHIPS);
+  const currentBetRef = useRef<number>(0);
+  const [currentBet, setCurrentBet] = useState<number>(0);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const syncDealerHand = (hand: CardType[]) => {
@@ -69,11 +68,47 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     setGameState(gs);
   };
 
+  const syncChips = (val: number) => {
+    chipsRef.current = val;
+    setChips(val);
+  };
+
+  const syncCurrentBet = (val: number) => {
+    currentBetRef.current = val;
+    setCurrentBet(val);
+  };
+
   const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+  // ── Betting ────────────────────────────────────────────────────────────────
+  const startBetting = () => {
+    syncCurrentBet(0);
+    syncGameState('betting');
+    setMessage('');
+  };
+
+  const addChipToBet = (value: number) => {
+    if (currentBetRef.current + value > chipsRef.current) return;
+    syncCurrentBet(currentBetRef.current + value);
+  };
+
+  const removeLastChip = () => {
+    // Remove the last chip added — since we don't track individual chips,
+    // just clear the whole bet for simplicity
+    syncCurrentBet(0);
+  };
+
+  const confirmBet = () => {
+    if (currentBetRef.current <= 0) return;
+    // Deduct bet from balance
+    syncChips(chipsRef.current - currentBetRef.current);
+    dealGame();
+  };
 
   // ── Deal ──────────────────────────────────────────────────────────────────
   const dealGame = () => {
-    // All 4 cards drawn synchronously from deckRef — no stale state
+    const betAmount = currentBetRef.current;
+
     const p1 = drawCard();
     const d1 = drawCard();
     const p2 = drawCard();
@@ -82,7 +117,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     const initialHand: PlayerHand = {
       id: `hand-${Date.now()}`,
       cards: [p1, p2],
-      bet: 1,
+      bet: betAmount,
       status: 'playing',
     };
 
@@ -100,18 +135,23 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
       syncPlayerHands([h]);
       syncGameState('game_over');
       setMessage('🤝 Double Blackjack! Push!');
+      // Push: return bet
+      syncChips(chipsRef.current + betAmount);
       playSound('push');
     } else if (dTotal === 21) {
       const h = { ...initialHand, result: 'loss' as const };
       syncPlayerHands([h]);
       syncGameState('game_over');
       setMessage('🤡 Dealer Blackjack! You Lose.');
+      // Loss: bet already deducted
       playSound('loss');
     } else if (pTotal === 21) {
       const h = { ...initialHand, status: 'blackjack' as const, result: 'win' as const };
       syncPlayerHands([h]);
       syncGameState('game_over');
       setMessage('🚀 BLACKJACK! You Win! 🌕');
+      // Blackjack pays 3:2 — return bet + 1.5x
+      syncChips(chipsRef.current + betAmount + Math.floor(betAmount * 1.5));
       playSound('blackjack');
     } else {
       syncGameState('player_turn');
@@ -174,6 +214,22 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
 
     syncPlayerHands(newHands);
 
+    // ── Calculate chip payouts ──
+    let totalPayout = 0;
+    for (const hand of newHands) {
+      if (hand.result === 'win') {
+        // Win: return bet + winnings (1:1)
+        totalPayout += hand.bet * 2;
+      } else if (hand.result === 'push') {
+        // Push: return bet
+        totalPayout += hand.bet;
+      }
+      // Loss: nothing returned
+    }
+    if (totalPayout > 0) {
+      syncChips(chipsRef.current + totalPayout);
+    }
+
     const wins = newHands.filter(h => h.result === 'win').length;
     const losses = newHands.filter(h => h.result === 'loss').length;
 
@@ -201,34 +257,14 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     }
   };
 
-  // ── Track strategy decision ───────────────────────────────────────────────
-  const trackDecision = (action: Action) => {
-    const hand = playerHandsRef.current[activeIdxRef.current];
-    const dealerUp = dealerHandRef.current[0];
-    if (!hand || !dealerUp) return;
 
-    const { action: correctAction } = getCorrectAction(hand.cards, dealerUp);
-    const isCorrect = action === correctAction;
-
-    setStats(prev => {
-      const newStreak = isCorrect ? prev.currentStreak + 1 : 0;
-      return {
-        totalDecisions: prev.totalDecisions + 1,
-        correctDecisions: prev.correctDecisions + (isCorrect ? 1 : 0),
-        currentStreak: newStreak,
-        bestStreak: Math.max(prev.bestStreak, newStreak),
-      };
-    });
-  };
 
   // ── Player actions ────────────────────────────────────────────────────────
 
   const handleHit = () => {
     if (gameStateRef.current !== 'player_turn') return;
-    trackDecision(Action.Hit);
 
     const idx = activeIdxRef.current;
-    // *** Always read from ref — never from render closure ***
     const hand = playerHandsRef.current[idx];
     if (!hand) return;
 
@@ -243,21 +279,17 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
       result: total > 21 ? 'loss' : undefined,
     };
 
-    // Build new hands array and flush to both ref and state immediately
     const newHands = playerHandsRef.current.map((h, i) => (i === idx ? updatedHand : h));
     syncPlayerHands(newHands);
 
     if (total > 21) {
       playSound('bust');
-      // Advance after a short pause so player sees the bust card
       setTimeout(advanceHand, 600);
     }
-    // If not bust: stay on same hand, player can Hit/Stand/Double again
   };
 
   const handleStand = () => {
     if (gameStateRef.current !== 'player_turn') return;
-    trackDecision(Action.Stand);
 
     const idx = activeIdxRef.current;
     const hand = playerHandsRef.current[idx];
@@ -276,7 +308,10 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     const hand = playerHandsRef.current[idx];
     if (!hand || hand.cards.length !== 2) return;
 
-    trackDecision(Action.Double);
+    // Double: deduct extra bet from chips
+    const extraBet = hand.bet;
+    if (chipsRef.current < extraBet) return; // can't afford to double
+    syncChips(chipsRef.current - extraBet);
 
     const newCard = drawCard();
     const updatedCards = [...hand.cards, newCard];
@@ -286,6 +321,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     const updatedHand: PlayerHand = {
       ...hand,
       cards: updatedCards,
+      bet: hand.bet * 2, // doubled bet
       status: bust ? 'busted' : 'standing',
       result: bust ? 'loss' : undefined,
     };
@@ -294,7 +330,6 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     syncPlayerHands(newHands);
 
     if (bust) playSound('bust');
-    // Auto-move after seeing the double card
     setTimeout(advanceHand, 600);
   };
 
@@ -305,13 +340,17 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     if (!hand || !isStrictPair(hand.cards)) return;
     if (playerHandsRef.current.length >= 4) return; // max 4 hands
 
-    trackDecision(Action.Split);
+    // Split: deduct extra bet for the second hand
+    const extraBet = hand.bet;
+    if (chipsRef.current < extraBet) return; // can't afford to split
+    syncChips(chipsRef.current - extraBet);
 
     const [card1, card2] = hand.cards;
     const hand1: PlayerHand = {
       ...hand,
       id: `hand-${Date.now()}-1`,
       cards: [card1, drawCard()],
+      bet: hand.bet, // same bet per hand
       status: 'playing',
       result: undefined,
     };
@@ -319,6 +358,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
       ...hand,
       id: `hand-${Date.now()}-2`,
       cards: [card2, drawCard()],
+      bet: hand.bet, // same bet per hand
       status: 'playing',
       result: undefined,
     };
@@ -326,7 +366,6 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     const newHands = [...playerHandsRef.current];
     newHands.splice(idx, 1, hand1, hand2);
 
-    // Aces rule: only one card each, auto-stand both
     if (card1.rank === 'A') {
       newHands[idx].status = 'standing';
       newHands[idx + 1].status = 'standing';
@@ -347,21 +386,20 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     gameState === 'player_turn' &&
     activeHand != null &&
     isStrictPair(activeHand.cards) &&
-    playerHands.length < 4;
+    playerHands.length < 4 &&
+    chips >= (activeHand?.bet ?? 0);
 
   const canDouble =
     gameState === 'player_turn' &&
     activeHand != null &&
-    activeHand.cards.length === 2;
-
-  const accuracy =
-    stats.totalDecisions === 0
-      ? '—'
-      : `${Math.round((stats.correctDecisions / stats.totalDecisions) * 100)}%`;
+    activeHand.cards.length === 2 &&
+    chips >= (activeHand?.bet ?? 0);
 
   // Dealer upcard value shown during player turn (only first card visible)
   const dealerUpTotal =
     dealerHand.length > 0 ? calculateHandValue([dealerHand[0]]).total : 0;
+
+  const isBroke = chips <= 0 && gameState !== 'player_turn' && gameState !== 'dealer_turn';
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -378,27 +416,23 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
           </h1>
         </div>
 
-        <div className="flex gap-6 text-sm sm:text-base font-mono">
+        {/* Chip Balance */}
+        <div className="flex gap-4 items-center">
           <div className="flex flex-col items-end">
-            <span className="text-slate-400 text-xs uppercase">Strategy</span>
-            <span
-              className={
-                stats.totalDecisions > 0 && stats.correctDecisions / stats.totalDecisions >= 0.9
-                  ? 'text-emerald-400'
-                  : 'text-white'
-              }
-            >
-              {accuracy}
+            <span className="text-slate-400 text-xs uppercase tracking-wider">Balance</span>
+            <span className={`text-lg font-bold font-mono ${chips >= STARTING_CHIPS ? 'text-emerald-400' : chips > 200 ? 'text-yellow-400' : 'text-red-400'
+              }`}>
+              💰 {chips.toLocaleString()}
             </span>
           </div>
-          <div className="flex flex-col items-end">
-            <span className="text-slate-400 text-xs uppercase">Streak</span>
-            <span className="text-yellow-400">⚡ {stats.currentStreak}</span>
-          </div>
-          <div className="flex flex-col items-end">
-            <span className="text-slate-400 text-xs uppercase">Best</span>
-            <span className="text-blue-400">🏆 {stats.bestStreak}</span>
-          </div>
+          {(gameState === 'player_turn' || gameState === 'dealer_turn' || gameState === 'game_over') && (
+            <div className="flex flex-col items-end">
+              <span className="text-slate-400 text-xs uppercase tracking-wider">Bet</span>
+              <span className="text-lg font-bold font-mono text-amber-300">
+                � {currentBet.toLocaleString()}
+              </span>
+            </div>
+          )}
         </div>
       </header>
 
@@ -415,7 +449,6 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
               />
             ))}
           </div>
-          {/* Dealer score: during player_turn show only upcard value */}
           {dealerHand.length > 0 && (
             <div className="mt-2 text-slate-300 font-mono text-sm">
               {gameState === 'player_turn'
@@ -429,7 +462,63 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
         {/* Player Hands Area */}
         <div className="flex-1 flex items-center justify-center w-full gap-6 sm:gap-10 flex-wrap">
           {gameState === 'idle' ? (
-            <div className="text-slate-500 text-lg">Press Deal to start</div>
+            <div className="text-slate-500 text-lg">Place your bet to start</div>
+          ) : gameState === 'betting' ? (
+            /* ── Betting UI ── */
+            <div className="flex flex-col items-center gap-6">
+              <div className="text-slate-300 text-lg font-semibold tracking-wide">Place Your Bet</div>
+
+              {/* Current bet display */}
+              <div className="bg-slate-800/80 border border-slate-600 rounded-2xl px-10 py-5 text-center">
+                <div className="text-slate-400 text-xs uppercase tracking-widest mb-1">Current Bet</div>
+                <div className="text-4xl font-bold font-mono text-amber-300">
+                  {currentBet.toLocaleString()}
+                </div>
+              </div>
+
+              {/* Chip buttons */}
+              <div className="flex gap-3 flex-wrap justify-center">
+                {CHIP_VALUES.map(val => (
+                  <button
+                    key={val}
+                    onClick={() => { playSound('click'); addChipToBet(val); }}
+                    disabled={currentBet + val > chips}
+                    className={`relative w-16 h-16 rounded-full font-bold text-sm shadow-lg
+                      transition-all active:scale-90
+                      ${currentBet + val > chips
+                        ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                        : val === 500
+                          ? 'bg-purple-600 hover:bg-purple-500 text-white border-2 border-purple-400'
+                          : val === 100
+                            ? 'bg-black hover:bg-gray-800 text-white border-2 border-gray-400'
+                            : val === 25
+                              ? 'bg-green-600 hover:bg-green-500 text-white border-2 border-green-400'
+                              : 'bg-blue-600 hover:bg-blue-500 text-white border-2 border-blue-400'
+                      }`}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
+
+              {/* Clear / Deal buttons */}
+              <div className="flex gap-4">
+                <button
+                  onClick={() => { playSound('click'); removeLastChip(); }}
+                  disabled={currentBet === 0}
+                  className="bg-slate-600 hover:bg-slate-500 disabled:bg-slate-800 disabled:text-slate-600 active:scale-95 text-white font-bold py-3 px-8 rounded-xl transition-all"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={() => { playSound('click'); confirmBet(); }}
+                  disabled={currentBet === 0}
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 active:scale-95 text-white font-bold py-3 px-10 rounded-xl text-lg transition-all"
+                >
+                  Deal 🃏
+                </button>
+              </div>
+            </div>
           ) : (
             playerHands.map((hand, index) => {
               const isActive = index === activeHandIndex && gameState === 'player_turn';
@@ -453,17 +542,18 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
                     {hand.result && (
                       <span
                         className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${hand.result === 'win'
-                            ? 'bg-emerald-600/40 text-emerald-300'
-                            : hand.result === 'loss'
-                              ? 'bg-red-600/40 text-red-300'
-                              : 'bg-slate-600/40 text-slate-300'
+                          ? 'bg-emerald-600/40 text-emerald-300'
+                          : hand.result === 'loss'
+                            ? 'bg-red-600/40 text-red-300'
+                            : 'bg-slate-600/40 text-slate-300'
                           }`}
                       >
                         {hand.result}
                       </span>
                     )}
+                    {/* Show bet per hand */}
+                    <span className="text-xs text-amber-300/70">({hand.bet})</span>
                   </div>
-                  {/* Cards stacked with overlap */}
                   <div className="flex relative" style={{ paddingRight: `${(hand.cards.length - 1) * 0}px` }}>
                     {hand.cards.map((card, i) => (
                       <div
@@ -493,17 +583,40 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
 
         {/* Controls */}
         <div className="w-full mt-auto py-6">
-          {gameState === 'idle' || gameState === 'game_over' ? (
+          {gameState === 'idle' ? (
             <div className="flex justify-center">
               <button
-                onClick={() => {
-                  playSound('click');
-                  dealGame();
-                }}
+                onClick={() => { playSound('click'); startBetting(); }}
                 className="bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold py-4 px-14 rounded-xl text-xl shadow-lg transition-all"
               >
-                {gameState === 'idle' ? 'Deal Cards' : 'Play Again'}
+                Start Playing
               </button>
+            </div>
+          ) : gameState === 'game_over' ? (
+            <div className="flex flex-col items-center gap-3">
+              {isBroke ? (
+                <>
+                  <div className="text-red-400 font-bold text-lg">💸 You're out of chips!</div>
+                  <button
+                    onClick={() => {
+                      playSound('click');
+                      syncChips(STARTING_CHIPS);
+                      syncGameState('idle');
+                      setMessage('');
+                    }}
+                    className="bg-amber-600 hover:bg-amber-500 active:scale-95 text-white font-bold py-3 px-10 rounded-xl text-lg shadow-lg transition-all"
+                  >
+                    Rebuy ({STARTING_CHIPS} chips)
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => { playSound('click'); startBetting(); }}
+                  className="bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold py-4 px-14 rounded-xl text-xl shadow-lg transition-all"
+                >
+                  Play Again
+                </button>
+              )}
             </div>
           ) : gameState === 'player_turn' ? (
             <div className="flex flex-wrap gap-3 sm:gap-4 justify-center w-full max-w-2xl px-4 mx-auto">
@@ -534,8 +647,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
                 Split
               </button>
             </div>
-          ) : (
-            // dealer_turn — show waiting indicator
+          ) : gameState === 'betting' ? null : (
             <div className="flex justify-center">
               <div className="text-slate-400 text-sm animate-pulse tracking-widest uppercase">
                 Dealer playing…

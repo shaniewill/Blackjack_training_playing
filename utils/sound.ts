@@ -1,146 +1,135 @@
-// Web Audio API Sound Utility
-// Simple synthesizer for game sound effects
+// Sound + Voice Utility
+// Short beeps for gameplay cues; Web Speech API for all result announcements
 
-// Prevent multiple audio contexts
 let audioContext: AudioContext | null = null;
 
-const getAudioContext = () => {
+const getCtx = () => {
     if (!audioContext) {
         audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
+    if (audioContext.state === 'suspended') audioContext.resume();
     return audioContext;
 };
 
+// Pre-load voices — Chrome loads them asynchronously and ignores speech if voices aren't ready
+if ('speechSynthesis' in window) {
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+}
+
+// ── Voice via Web Speech API ──────────────────────────────────────────────────
+export const speak = (text: string, rate = 1.0, pitch = 1.0) => {
+    if (!('speechSynthesis' in window)) return;
+
+    // Chrome bug: speech silently fails when paused (e.g. after tab switch)
+    if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = 'en-US';
+    utt.rate = rate;
+    utt.pitch = pitch;
+    utt.volume = 1;
+
+    // Pick best English voice if available (Microsoft voices on Windows are great)
+    const voices = window.speechSynthesis.getVoices();
+    const voice = voices.find(v => v.lang === 'en-US') ?? voices.find(v => v.lang.startsWith('en'));
+    if (voice) utt.voice = voice;
+
+    window.speechSynthesis.speak(utt);
+};
+
+
+// ── Sound effects ─────────────────────────────────────────────────────────────
 type SoundType = 'click' | 'deal' | 'win' | 'loss' | 'bust' | 'push' | 'blackjack';
 
 export const playSound = (type: SoundType) => {
     try {
-        const ctx = getAudioContext();
-        if (ctx.state === 'suspended') {
-            ctx.resume();
-        }
-
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-
+        const ctx = getCtx();
         const now = ctx.currentTime;
 
         switch (type) {
             case 'click':
-                // High "Pop" / Bubble sound
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(800, now);
-                osc.frequency.exponentialRampToValueAtTime(1200, now + 0.05); // Pitch Up
-                gainNode.gain.setValueAtTime(0.3, now); // Louder
-                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-                osc.start(now);
-                osc.stop(now + 0.1);
+                note(ctx, 900, now, 0.07, 'sine');
                 break;
 
             case 'deal':
-                // "Zip" / Card slide - fast filtersweep noise
-                // We'll simulate with a fast sliding triangle for simplicity since white noise needs a buffer
-                osc.type = 'triangle';
-                osc.frequency.setValueAtTime(600, now);
-                osc.frequency.linearRampToValueAtTime(1200, now + 0.08); // Fast Zip Up
-                gainNode.gain.setValueAtTime(0.1, now);
-                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.1);
-                osc.start(now);
-                osc.stop(now + 0.1);
-                break;
-
-            case 'win':
-                // 8-bit Power Up (Arpeggio Up)
-                playNote(ctx, 523.25, now, 0.08, 'square'); // C5
-                playNote(ctx, 659.25, now + 0.08, 0.08, 'square'); // E5
-                playNote(ctx, 783.99, now + 0.16, 0.08, 'square'); // G5
-                playNote(ctx, 1046.50, now + 0.24, 0.2, 'square'); // C6 - Sustain
-
-                // Add a "ding"
-                playNote(ctx, 2093.00, now + 0.24, 0.3, 'sine'); // C7
-                break;
-
-            case 'blackjack':
-                // Jackpot Fanfare
-                const start = now;
-                [0, 0.1, 0.2, 0.3].forEach((t, i) => {
-                    playNote(ctx, 880 + (i * 100), start + t, 0.1, 'square');
-                });
-                playNote(ctx, 1760, start + 0.4, 0.4, 'sawtooth');
-                break;
-
-            case 'loss':
-                // "Sad Trombone" / Wobble Down
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(300, now);
-                osc.frequency.linearRampToValueAtTime(150, now + 0.4); // Slide Down
-
-                // Add wobble (LFO effect manual)
-                gainNode.gain.setValueAtTime(0.2, now);
-                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.4);
-
-                osc.start(now);
-                osc.stop(now + 0.4);
-
-                // Second "wah"
-                setTimeout(() => {
-                    const ctx2 = getAudioContext();
-                    const osc2 = ctx2.createOscillator();
-                    const g2 = ctx2.createGain();
-                    osc2.connect(g2);
-                    g2.connect(ctx2.destination);
-                    osc2.type = 'sawtooth';
-                    osc2.frequency.setValueAtTime(150, ctx2.currentTime);
-                    osc2.frequency.linearRampToValueAtTime(100, ctx2.currentTime + 0.5);
-                    g2.gain.setValueAtTime(0.2, ctx2.currentTime);
-                    g2.gain.linearRampToValueAtTime(0.01, ctx2.currentTime + 0.5);
-                    osc2.start(ctx2.currentTime);
-                    osc2.stop(ctx2.currentTime + 0.5);
-                }, 400);
+                note(ctx, 600, now, 0.05, 'triangle');
+                note(ctx, 1000, now + 0.05, 0.05, 'triangle');
                 break;
 
             case 'bust':
-                // Cartoon "Slip/Fall" - Whistle Down
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(800, now);
-                osc.frequency.exponentialRampToValueAtTime(100, now + 0.5); // Fast Drop
+                slide(ctx, 700, 120, now, 0.45);
+                speak('Bust!', 1.1, 0.85);
+                break;
 
-                gainNode.gain.setValueAtTime(0.2, now);
-                gainNode.gain.linearRampToValueAtTime(0.01, now + 0.5);
+            case 'win':
+                note(ctx, 523, now, 0.08, 'square');
+                note(ctx, 659, now + 0.08, 0.08, 'square');
+                note(ctx, 784, now + 0.16, 0.08, 'square');
+                note(ctx, 1047, now + 0.24, 0.2, 'square');
+                speak('You win!', 1.0, 1.1);
+                break;
 
-                osc.start(now);
-                osc.stop(now + 0.5);
+            case 'blackjack':
+                [0, 0.09, 0.18, 0.27].forEach((t, i) =>
+                    note(ctx, 880 + i * 110, now + t, 0.09, 'square')
+                );
+                note(ctx, 1760, now + 0.38, 0.35, 'sawtooth');
+                speak('Blackjack! You win!', 1.0, 1.2);
+                break;
+
+            case 'loss':
+                slide(ctx, 280, 130, now, 0.5);
+                speak('Dealer wins.', 0.9, 0.85);
                 break;
 
             case 'push':
-                // "Meh" - Two flat tones
-                playNote(ctx, 400, now, 0.2, 'triangle');
-                playNote(ctx, 400, now + 0.25, 0.3, 'triangle');
+                note(ctx, 400, now, 0.2, 'triangle');
+                note(ctx, 400, now + 0.25, 0.2, 'triangle');
+                speak("It's a push.", 0.95, 1.0);
                 break;
         }
-
     } catch (e) {
-        console.error("Audio play failed", e);
+        console.error('Audio error:', e);
     }
 };
 
-// Helper for playing musical notes
-const playNote = (ctx: AudioContext, freq: number, startTime: number, duration: number, type: OscillatorType = 'sine') => {
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const note = (
+    ctx: AudioContext,
+    freq: number,
+    t: number,
+    dur: number,
+    type: OscillatorType
+) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-
     osc.type = type;
     osc.frequency.value = freq;
-
     osc.connect(gain);
     gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.1, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.start(t);
+    osc.stop(t + dur);
+};
 
-    gain.gain.setValueAtTime(0.1, startTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
-
-    osc.start(startTime);
-    osc.stop(startTime + duration);
+const slide = (
+    ctx: AudioContext,
+    freqFrom: number,
+    freqTo: number,
+    t: number,
+    dur: number
+) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freqFrom, t);
+    osc.frequency.exponentialRampToValueAtTime(freqTo, t + dur);
+    gain.gain.setValueAtTime(0.2, t);
+    gain.gain.linearRampToValueAtTime(0.001, t + dur);
+    osc.start(t);
+    osc.stop(t + dur);
 };
