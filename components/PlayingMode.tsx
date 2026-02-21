@@ -438,9 +438,9 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
 
       <main className="flex-1 w-full max-w-5xl mx-auto flex flex-col items-center p-4 relative overflow-hidden">
         {/* Dealer Area */}
-        <div className="flex flex-col items-center mb-8 mt-4 min-h-[180px]">
+        <div className="flex flex-col items-center mb-4 mt-2 shrink-0">
           <div className="text-slate-400 text-xs uppercase tracking-widest mb-2">Dealer</div>
-          <div className="flex gap-3 flex-wrap justify-center">
+          <div className="flex gap-2 flex-wrap justify-center">
             {dealerHand.map((card, i) => (
               <Card
                 key={card.id}
@@ -459,8 +459,11 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
           )}
         </div>
 
+        {/* Divider */}
+        <div className="w-32 border-t border-slate-700 mb-4" />
+
         {/* Player Hands Area */}
-        <div className="flex-1 flex items-center justify-center w-full gap-6 sm:gap-10 flex-wrap">
+        <div className="flex-1 flex items-start justify-center w-full gap-6 sm:gap-10 flex-wrap pt-2">
           {gameState === 'idle' ? (
             <div className="text-slate-500 text-lg">Place your bet to start</div>
           ) : gameState === 'betting' ? (
@@ -534,7 +537,20 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
                     ${hand.result === 'loss' ? 'text-red-400' : ''}
                   `}
                 >
-                  <div className="mb-2 font-mono text-sm font-bold flex gap-2 items-center">
+                  {/* Cards */}
+                  <div className="flex relative">
+                    {hand.cards.map((card, i) => (
+                      <div
+                        key={card.id}
+                        style={{ marginLeft: i > 0 ? '-30px' : '0', zIndex: i }}
+                        className="relative"
+                      >
+                        <Card card={card} />
+                      </div>
+                    ))}
+                  </div>
+                  {/* Hand info below cards */}
+                  <div className="mt-2 font-mono text-sm font-bold flex gap-2 items-center">
                     <span>
                       {total}
                       {bust ? ' BUST' : isSoft ? ' (Soft)' : ''}
@@ -542,31 +558,19 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
                     {hand.result && (
                       <span
                         className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${hand.result === 'win'
-                          ? 'bg-emerald-600/40 text-emerald-300'
-                          : hand.result === 'loss'
-                            ? 'bg-red-600/40 text-red-300'
-                            : 'bg-slate-600/40 text-slate-300'
-                          }`}
+                            ? 'bg-emerald-600/40 text-emerald-300'
+                            : hand.result === 'loss'
+                              ? 'bg-red-600/40 text-red-300'
+                              : 'bg-slate-600/40 text-slate-300'
+                          } `}
                       >
                         {hand.result}
                       </span>
                     )}
-                    {/* Show bet per hand */}
                     <span className="text-xs text-amber-300/70">({hand.bet})</span>
                   </div>
-                  <div className="flex relative" style={{ paddingRight: `${(hand.cards.length - 1) * 0}px` }}>
-                    {hand.cards.map((card, i) => (
-                      <div
-                        key={card.id}
-                        style={{ marginLeft: i > 0 ? '-48px' : '0', zIndex: i }}
-                        className="relative"
-                      >
-                        <Card card={card} />
-                      </div>
-                    ))}
-                  </div>
                   {isActive && (
-                    <div className="mt-3 w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
+                    <div className="mt-2 w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
                   )}
                 </div>
               );
