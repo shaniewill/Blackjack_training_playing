@@ -82,6 +82,8 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
 
   // ── Betting ────────────────────────────────────────────────────────────────
   const startBetting = () => {
+    syncDealerHand([]);
+    syncPlayerHands([]);
     syncCurrentBet(0);
     syncGameState('betting');
     setMessage('');
@@ -558,10 +560,10 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
                     {hand.result && (
                       <span
                         className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${hand.result === 'win'
-                            ? 'bg-emerald-600/40 text-emerald-300'
-                            : hand.result === 'loss'
-                              ? 'bg-red-600/40 text-red-300'
-                              : 'bg-slate-600/40 text-slate-300'
+                          ? 'bg-emerald-600/40 text-emerald-300'
+                          : hand.result === 'loss'
+                            ? 'bg-red-600/40 text-red-300'
+                            : 'bg-slate-600/40 text-slate-300'
                           } `}
                       >
                         {hand.result}
