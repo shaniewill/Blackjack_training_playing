@@ -60,3 +60,25 @@ export interface PlayerHand {
 }
 
 export type GameState = 'idle' | 'betting' | 'dealing' | 'player_turn' | 'dealer_turn' | 'game_over';
+
+// ── Multiplayer Types ──────────────────────────────────────────────────────────
+export type RoomPhase = 'lobby' | 'betting' | 'player_turns' | 'dealer_turn' | 'results';
+
+export interface SerializedPlayer {
+  socketId: string;
+  name: string;
+  chips: number;
+  hands: PlayerHand[];
+  currentBet: number;
+  hasBet: boolean;
+  isDone: boolean;
+}
+
+export interface SerializedRoom {
+  code: string;
+  hostId: string;
+  phase: RoomPhase;
+  players: SerializedPlayer[];
+  dealerHand: Card[];
+  activePlayerId: string | null;
+}

@@ -439,27 +439,29 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
       </header>
 
       <main className="flex-1 w-full max-w-5xl mx-auto flex flex-col items-center p-4 relative overflow-hidden">
-        {/* Dealer Area */}
-        <div className="flex flex-col items-center mb-4 mt-2 shrink-0">
-          <div className="text-slate-400 text-xs uppercase tracking-widest mb-2">Dealer</div>
-          <div className="flex gap-2 flex-wrap justify-center">
-            {dealerHand.map((card, i) => (
-              <Card
-                key={card.id}
-                card={card}
-                faceDown={i === 1 && gameState === 'player_turn'}
-              />
-            ))}
-          </div>
-          {dealerHand.length > 0 && (
-            <div className="mt-2 text-slate-300 font-mono text-sm">
-              {gameState === 'player_turn'
-                ? `Showing: ${dealerUpTotal}`
-                : `Total: ${calculateHandValue(dealerHand).total}${calculateHandValue(dealerHand).isSoft ? ' (Soft)' : ''}`
-              }
+        {/* Dealer Area — hidden during idle/betting so last-round cards don't linger */}
+        {gameState !== 'idle' && gameState !== 'betting' && dealerHand.length > 0 && (
+          <div className="flex flex-col items-center mb-4 mt-2 shrink-0">
+            <div className="text-slate-400 text-xs uppercase tracking-widest mb-2">Dealer</div>
+            <div className="flex gap-2 flex-wrap justify-center">
+              {dealerHand.map((card, i) => (
+                <Card
+                  key={card.id}
+                  card={card}
+                  faceDown={i === 1 && gameState === 'player_turn'}
+                />
+              ))}
             </div>
-          )}
-        </div>
+            {dealerHand.length > 0 && (
+              <div className="mt-2 text-slate-300 font-mono text-sm">
+                {gameState === 'player_turn'
+                  ? `Showing: ${dealerUpTotal}`
+                  : `Total: ${calculateHandValue(dealerHand).total}${calculateHandValue(dealerHand).isSoft ? ' (Soft)' : ''}`
+                }
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Divider */}
         <div className="w-32 border-t border-slate-700 mb-4" />

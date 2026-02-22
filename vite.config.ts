@@ -8,6 +8,12 @@ export default defineConfig(({ mode }) => {
     base: './',
     server: {
       port: 3000,
+      proxy: {
+        '/socket.io': {
+          target: 'http://localhost:3001',
+          ws: true,
+        },
+      },
     },
     plugins: [react()],
     define: {
