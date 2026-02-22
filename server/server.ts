@@ -507,6 +507,6 @@ function sleep(ms: number) {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
-httpServer.listen(PORT, () => {
-    console.log(`Multiplayer server running on http://localhost:${PORT}`);
+httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`Multiplayer server running on http://0.0.0.0:${PORT}`);
 });

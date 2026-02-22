@@ -5,17 +5,18 @@ interface MultiplayerLobbyProps {
     onJoinRoom: (name: string, code: string) => void;
     roomCode: string | null;
     error: string | null;
+    connected: boolean;
     onBack: () => void;
 }
 
 const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
-    onCreateRoom, onJoinRoom, roomCode, error, onBack,
+    onCreateRoom, onJoinRoom, roomCode, error, connected, onBack,
 }) => {
     const [name, setName] = useState('');
     const [code, setCode] = useState('');
     const [mode, setMode] = useState<'choose' | 'create' | 'join'>('choose');
 
-    const nameValid = name.trim().length >= 1;
+    const nameValid = name.trim().length >= 1 && connected;
 
     return (
         <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
@@ -28,6 +29,8 @@ const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                         </svg>
                     </button>
                     <h2 className="text-2xl font-bold text-white">Multiplayer</h2>
+                    <div className={`w-3 h-3 rounded-full ${connected ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'}`}
+                        title={connected ? 'Connected' : 'Connecting…'} />
                 </div>
 
                 {/* Name input — always visible */}

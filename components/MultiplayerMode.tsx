@@ -11,7 +11,7 @@ interface MultiplayerModeProps {
 }
 
 const CHIP_VALUES = [10, 25, 100, 500] as const;
-const SERVER_URL = (import.meta as any).env?.VITE_MP_SERVER ?? 'http://localhost:3001';
+const SERVER_URL = (import.meta as any).env?.VITE_MP_SERVER ?? `http://${window.location.hostname}:3001`;
 
 const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
     const socketRef = useRef<Socket | null>(null);
@@ -31,8 +31,12 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
         socket.on('connect', () => {
             setConnected(true);
             setMyId(socket.id ?? null);
+            setError(null);
         });
         socket.on('disconnect', () => setConnected(false));
+        socket.on('connect_error', () => {
+            setError('Cannot connect to server. Check your network.');
+        });
         socket.on('room-created', ({ code }: { code: string }) => setRoomCode(code));
         socket.on('room-joined', ({ code }: { code: string }) => setRoomCode(code));
         socket.on('room-update', (data: SerializedRoom) => setRoom(data));
@@ -114,6 +118,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                 onJoinRoom={handleJoinRoom}
                 roomCode={roomCode}
                 error={error}
+                connected={connected}
                 onBack={handleLeave}
             />
         );
