@@ -11,7 +11,9 @@ interface MultiplayerModeProps {
 }
 
 const CHIP_VALUES = [10, 25, 100, 500] as const;
-const SERVER_URL = (import.meta as any).env?.VITE_MP_SERVER ?? `http://${window.location.hostname}:3001`;
+// In dev, Socket.IO goes through Vite's proxy (same origin, port 3000).
+// In production, set VITE_MP_SERVER to the deployed server URL.
+const SERVER_URL = (import.meta as any).env?.VITE_MP_SERVER ?? '';
 
 const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
     const socketRef = useRef<Socket | null>(null);
@@ -25,7 +27,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
 
     // ── Socket Connection ──
     useEffect(() => {
-        const socket = io(SERVER_URL, { transports: ['websocket', 'polling'] });
+        const socket = io(SERVER_URL || undefined, { transports: ['websocket', 'polling'] });
         socketRef.current = socket;
 
         socket.on('connect', () => {
