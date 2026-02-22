@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: blackjack-multiplayer-server
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
