@@ -18,11 +18,11 @@ if ('speechSynthesis' in window) {
 }
 
 // ── Voice via Web Speech API ──────────────────────────────────────────────────
-export const speak = (text: string, rate = 1.0, pitch = 1.0) => {
+export const speak = (text: string, rate = 1.3, pitch = 1.0) => {
     if (!('speechSynthesis' in window)) return;
 
-    // Chrome bug: speech silently fails when paused (e.g. after tab switch)
-    if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+    // Cancel any queued/in-progress speech so new announcements are instant
+    window.speechSynthesis.cancel();
 
     const utt = new SpeechSynthesisUtterance(text);
     utt.lang = 'en-US';
@@ -42,6 +42,8 @@ export const speak = (text: string, rate = 1.0, pitch = 1.0) => {
 // ── Sound effects ─────────────────────────────────────────────────────────────
 type SoundType = 'click' | 'deal' | 'win' | 'loss' | 'bust' | 'push' | 'blackjack';
 
+
+
 export const playSound = (type: SoundType) => {
     try {
         const ctx = getCtx();
@@ -53,40 +55,59 @@ export const playSound = (type: SoundType) => {
                 break;
 
             case 'deal':
-                note(ctx, 600, now, 0.05, 'triangle');
-                note(ctx, 1000, now + 0.05, 0.05, 'triangle');
+                // Crisp card-snap feel
+                note(ctx, 600, now, 0.04, 'triangle');
+                note(ctx, 1200, now + 0.04, 0.04, 'triangle');
                 break;
 
             case 'bust':
-                slide(ctx, 700, 120, now, 0.45);
-                speak('Bust!', 1.1, 0.85);
+                // Gentle descending — not harsh, a soft "oh no"
+                note(ctx, 500, now, 0.12, 'sine');
+                note(ctx, 400, now + 0.12, 0.12, 'sine');
+                note(ctx, 300, now + 0.24, 0.25, 'sine');
+                speak('Bust', 0.95, 0.85);
                 break;
 
-            case 'win':
-                note(ctx, 523, now, 0.08, 'square');
-                note(ctx, 659, now + 0.08, 0.08, 'square');
-                note(ctx, 784, now + 0.16, 0.08, 'square');
-                note(ctx, 1047, now + 0.24, 0.2, 'square');
-                speak('You win!', 1.0, 1.1);
+            case 'win': {
+                // Bright ascending major chord — celebratory 🎶
+                const winNotes = [523, 659, 784, 880, 1047]; // C5 E5 G5 A5 C6
+                winNotes.forEach((f, i) => {
+                    note(ctx, f, now + i * 0.08, 0.12, 'sine');
+                    note(ctx, f, now + i * 0.08, 0.06, 'square'); // shimmer layer
+                });
+                // Sparkle on top
+                note(ctx, 1568, now + 0.4, 0.3, 'sine');
+                speak('You win', 1.0, 1.15);
                 break;
+            }
 
-            case 'blackjack':
-                [0, 0.09, 0.18, 0.27].forEach((t, i) =>
-                    note(ctx, 880 + i * 110, now + t, 0.09, 'square')
-                );
-                note(ctx, 1760, now + 0.38, 0.35, 'sawtooth');
-                speak('Blackjack! You win!', 1.0, 1.2);
+            case 'blackjack': {
+                // Triumphant fanfare — ascending with a grand finish
+                const bjNotes = [659, 784, 988, 1175, 1319]; // E5 G5 B5 D6 E6
+                bjNotes.forEach((f, i) => {
+                    note(ctx, f, now + i * 0.1, 0.15, 'square');
+                    note(ctx, f * 0.5, now + i * 0.1, 0.1, 'sine'); // bass layer
+                });
+                // Grand finale chord
+                [1319, 1568, 1976].forEach(f => note(ctx, f, now + 0.55, 0.5, 'sine'));
+                speak('Blackjack, you win', 1.0, 1.25);
                 break;
+            }
 
             case 'loss':
-                slide(ctx, 280, 130, now, 0.5);
-                speak('Dealer wins.', 0.9, 0.85);
+                // Soft minor descent — sad but still warm
+                note(ctx, 440, now, 0.2, 'sine');
+                note(ctx, 392, now + 0.2, 0.2, 'sine');
+                note(ctx, 330, now + 0.4, 0.35, 'sine');
+                speak('Dealer wins', 0.9, 0.9);
                 break;
 
             case 'push':
-                note(ctx, 400, now, 0.2, 'triangle');
-                note(ctx, 400, now + 0.25, 0.2, 'triangle');
-                speak("It's a push.", 0.95, 1.0);
+                // Neutral warm tone — two gentle matching notes
+                note(ctx, 523, now, 0.15, 'sine');
+                note(ctx, 523, now + 0.2, 0.15, 'sine');
+                note(ctx, 659, now + 0.35, 0.2, 'sine');
+                speak('Push', 0.95, 1.0);
                 break;
         }
     } catch (e) {

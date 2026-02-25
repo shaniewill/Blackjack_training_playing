@@ -87,7 +87,7 @@ const TrainingMode: React.FC<TrainingModeProps> = ({ onBack }) => {
   if (loading) return <div className="flex h-full items-center justify-center text-white">Loading...</div>;
 
   return (
-    <div className="flex flex-col h-full w-full">
+    <div className="flex flex-col min-h-screen w-full">
       <header className="w-full bg-slate-800 border-b border-slate-700 p-4 flex justify-between items-center z-10 shadow-md">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="text-slate-400 hover:text-white transition-colors">

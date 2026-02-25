@@ -175,7 +175,7 @@ io.on('connection', (socket: Socket) => {
         const room = rooms.get(code);
         if (!room) { socket.emit('error-msg', 'Room not found'); return; }
         if (room.phase !== 'lobby') { socket.emit('error-msg', 'Game already in progress'); return; }
-        if (room.players.size >= 6) { socket.emit('error-msg', 'Room is full (max 6)'); return; }
+        if (room.players.size >= 7) { socket.emit('error-msg', 'Room is full (max 7)'); return; }
 
         room.players.set(socket.id, {
             socketId: socket.id,

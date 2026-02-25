@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import Card from './Card';
-import { playSound } from '../utils/sound';
+import { playSound, speak } from '../utils/sound';
 import { createDeck, shuffleDeck, calculateHandValue, isStrictPair } from '../utils/deck';
 import { Card as CardType, PlayerHand, GameState } from '../types';
 
@@ -36,6 +36,10 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
 
   const gameStateRef = useRef<GameState>('idle');
   const [gameState, setGameState] = useState<GameState>('idle');
+
+  // Deal animation state: -1 = no animation, 0+ = current card reveal step
+  const [dealStep, setDealStep] = useState(-1);
+  const dealTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [message, setMessage] = useState<string>('');
 
@@ -107,6 +111,12 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     dealGame();
   };
 
+  // Deal order: player card 0, dealer card 0, player card 1, dealer card 1
+  const getDealOrder = (isDealer: boolean, cardIndex: number): number => {
+    // card 0: player=0, dealer=1; card 1: player=2, dealer=3
+    return cardIndex * 2 + (isDealer ? 1 : 0);
+  };
+
   // ── Deal ──────────────────────────────────────────────────────────────────
   const dealGame = () => {
     const betAmount = currentBetRef.current;
@@ -127,37 +137,53 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     syncPlayerHands([initialHand]);
     syncActiveIdx(0);
     setMessage('');
-    playSound('deal');
+    syncGameState('dealing');
 
-    const { total: pTotal } = calculateHandValue([p1, p2]);
-    const { total: dTotal } = calculateHandValue([d1, d2]);
+    // Card-by-card deal animation (4 cards total)
+    const totalSteps = 4; // p1, d1, p2, d2
+    setDealStep(0);
+    let step = 0;
+    if (dealTimerRef.current) clearInterval(dealTimerRef.current);
+    playSound('deal'); // first card
+    dealTimerRef.current = setInterval(() => {
+      step++;
+      if (step >= totalSteps) {
+        clearInterval(dealTimerRef.current!);
+        dealTimerRef.current = null;
+        setDealStep(-1);
+        // Animation done — check for special hands
+        const { total: pTotal } = calculateHandValue([p1, p2]);
+        const { total: dTotal } = calculateHandValue([d1, d2]);
 
-    if (pTotal === 21 && dTotal === 21) {
-      const h = { ...initialHand, status: 'blackjack' as const, result: 'push' as const };
-      syncPlayerHands([h]);
-      syncGameState('game_over');
-      setMessage('🤝 Double Blackjack! Push!');
-      // Push: return bet
-      syncChips(chipsRef.current + betAmount);
-      playSound('push');
-    } else if (dTotal === 21) {
-      const h = { ...initialHand, result: 'loss' as const };
-      syncPlayerHands([h]);
-      syncGameState('game_over');
-      setMessage('🤡 Dealer Blackjack! You Lose.');
-      // Loss: bet already deducted
-      playSound('loss');
-    } else if (pTotal === 21) {
-      const h = { ...initialHand, status: 'blackjack' as const, result: 'win' as const };
-      syncPlayerHands([h]);
-      syncGameState('game_over');
-      setMessage('🚀 BLACKJACK! You Win! 🌕');
-      // Blackjack pays 3:2 — return bet + 1.5x
-      syncChips(chipsRef.current + betAmount + Math.floor(betAmount * 1.5));
-      playSound('blackjack');
-    } else {
-      syncGameState('player_turn');
-    }
+        if (pTotal === 21 && dTotal === 21) {
+          const h = { ...initialHand, status: 'blackjack' as const, result: 'push' as const };
+          syncPlayerHands([h]);
+          syncGameState('game_over');
+          setMessage('🤝 Double Blackjack! Push!');
+          syncChips(chipsRef.current + betAmount);
+          setTimeout(() => playSound('push'), 800);
+        } else if (dTotal === 21) {
+          const h = { ...initialHand, result: 'loss' as const };
+          syncPlayerHands([h]);
+          syncGameState('game_over');
+          setMessage('🤡 Dealer Blackjack! You Lose.');
+          setTimeout(() => playSound('loss'), 800);
+        } else if (pTotal === 21) {
+          const h = { ...initialHand, status: 'blackjack' as const, result: 'win' as const };
+          syncPlayerHands([h]);
+          syncGameState('game_over');
+          setMessage('🚀 BLACKJACK! You Win! 🌕');
+          syncChips(chipsRef.current + betAmount + Math.floor(betAmount * 1.5));
+          setTimeout(() => playSound('blackjack'), 800);
+        } else {
+          syncGameState('player_turn');
+          speak(`${pTotal}`, 1.3, 1.05);
+        }
+      } else {
+        playSound('deal');
+        setDealStep(step);
+      }
+    }, 400);
   };
 
   // ── Dealer turn (async, always reads from refs) ───────────────────────────
@@ -184,15 +210,20 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     // dealerHandRef already has both cards
     let { total, isSoft } = calculateHandValue(dealerHandRef.current);
 
+    // Speak initial dealer total (hole card reveal)
+    speak(`${total}`, 1.3, 1.0);
+
     while (total < 17 || (total === 17 && isSoft)) {
       await wait(700);
       const card = drawCard();
       const newDHand = [...dealerHandRef.current, card];
       syncDealerHand(newDHand);
       ({ total, isSoft } = calculateHandValue(newDHand));
+      speak(`${total}`, 1.3, 1.0);
     }
 
-    await wait(500);
+    // Wait long enough for the last spoken total to finish before result announcement
+    await wait(1200);
     syncGameState('game_over');
     resolveResults();
   };
@@ -287,6 +318,8 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     if (total > 21) {
       playSound('bust');
       setTimeout(advanceHand, 600);
+    } else {
+      speak(`${total}`, 1.0, 1.0);
     }
   };
 
@@ -331,7 +364,11 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     const newHands = playerHandsRef.current.map((h, i) => (i === idx ? updatedHand : h));
     syncPlayerHands(newHands);
 
-    if (bust) playSound('bust');
+    if (bust) {
+      playSound('bust');
+    } else {
+      speak(`${total}`, 1.0, 1.0);
+    }
     setTimeout(advanceHand, 600);
   };
 
@@ -404,7 +441,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
   const isBroke = chips <= 0 && gameState !== 'player_turn' && gameState !== 'dealer_turn';
 
   return (
-    <div className="flex flex-col h-full w-full">
+    <div className="flex flex-col min-h-screen w-full">
       {/* Header */}
       <header className="w-full bg-slate-800 border-b border-slate-700 p-4 flex justify-between items-center z-10 shadow-md">
         <div className="flex items-center gap-4">
@@ -438,21 +475,27 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-5xl mx-auto flex flex-col items-center p-4 relative overflow-hidden">
+      <main className="flex-1 w-full max-w-5xl mx-auto flex flex-col items-center p-4 relative overflow-auto">
         {/* Dealer Area — hidden during idle/betting so last-round cards don't linger */}
         {gameState !== 'idle' && gameState !== 'betting' && dealerHand.length > 0 && (
           <div className="flex flex-col items-center mb-4 mt-2 shrink-0">
             <div className="text-slate-400 text-xs uppercase tracking-widest mb-2">Dealer</div>
             <div className="flex gap-2 flex-wrap justify-center">
-              {dealerHand.map((card, i) => (
-                <Card
-                  key={card.id}
-                  card={card}
-                  faceDown={i === 1 && gameState === 'player_turn'}
-                />
-              ))}
+              {dealerHand.map((card, i) => {
+                const dealOrder = getDealOrder(true, i);
+                const isHidden = dealStep >= 0 && i < 2 && dealOrder > dealStep;
+                const justDealt = dealStep >= 0 && i < 2 && dealOrder === dealStep;
+                return (
+                  <div key={card.id} className={`${justDealt ? 'animate-[dealCard_0.6s_ease-out]' : ''} ${isHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+                    <Card
+                      card={card}
+                      faceDown={i === 1 && (gameState === 'player_turn' || gameState === 'dealing')}
+                    />
+                  </div>
+                );
+              })}
             </div>
-            {dealerHand.length > 0 && (
+            {dealStep < 0 && dealerHand.length > 0 && (
               <div className="mt-2 text-slate-300 font-mono text-sm">
                 {gameState === 'player_turn'
                   ? `Showing: ${dealerUpTotal}`
@@ -543,18 +586,23 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
                 >
                   {/* Cards */}
                   <div className="flex relative">
-                    {hand.cards.map((card, i) => (
-                      <div
-                        key={card.id}
-                        style={{ marginLeft: i > 0 ? '-30px' : '0', zIndex: i }}
-                        className="relative"
-                      >
-                        <Card card={card} />
-                      </div>
-                    ))}
+                    {hand.cards.map((card, ci) => {
+                      const dealOrder = getDealOrder(false, ci);
+                      const isHidden = dealStep >= 0 && ci < 2 && dealOrder > dealStep;
+                      const justDealt = dealStep >= 0 && ci < 2 && dealOrder === dealStep;
+                      return (
+                        <div
+                          key={card.id}
+                          style={{ marginLeft: ci > 0 ? '-30px' : '0', zIndex: ci }}
+                          className={`relative ${justDealt ? 'animate-[dealCard_0.6s_ease-out]' : ''} ${isHidden ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                        >
+                          <Card card={card} />
+                        </div>
+                      );
+                    })}
                   </div>
                   {/* Hand info below cards */}
-                  <div className="mt-2 font-mono text-sm font-bold flex gap-2 items-center">
+                  {dealStep < 0 && <div className="mt-2 font-mono text-sm font-bold flex gap-2 items-center">
                     <span>
                       {total}
                       {bust ? ' BUST' : isSoft ? ' (Soft)' : ''}
@@ -572,7 +620,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
                       </span>
                     )}
                     <span className="text-xs text-amber-300/70">({hand.bet})</span>
-                  </div>
+                  </div>}
                   {isActive && (
                     <div className="mt-2 w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
                   )}
