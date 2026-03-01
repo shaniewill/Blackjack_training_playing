@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { io } from 'socket.io-client';
 import Card from './Card';
 import { playSound } from '../utils/sound';
 import Controls from './Controls';
@@ -6,18 +7,27 @@ import Feedback from './Feedback';
 import { createDeck, shuffleDeck, calculateHandValue, isStrictPair } from '../utils/deck';
 import { getCorrectAction } from '../utils/strategy';
 import { Card as CardType, Action, HandResult, GameStats } from '../types';
+import { UserProfile, getToken } from '../utils/api';
 
 interface TrainingModeProps {
   onBack: () => void;
+  user?: UserProfile | null;
 }
 
-const TrainingMode: React.FC<TrainingModeProps> = ({ onBack }) => {
+const TrainingMode: React.FC<TrainingModeProps> = ({ onBack, user }) => {
   const [deck, setDeck] = useState<CardType[]>([]);
   const [playerHand, setPlayerHand] = useState<CardType[]>([]);
   const [dealerHand, setDealerHand] = useState<CardType[]>([]);
   const [gameResult, setGameResult] = useState<HandResult | null>(null);
   const [stats, setStats] = useState<GameStats>({ correct: 0, total: 0, streak: 0 });
   const [loading, setLoading] = useState(true);
+  const bestStreakRef = useRef(0);
+
+  // Socket ref for sending results to server
+  const socketRef = useRef((() => {
+    try { return io(undefined as any, { transports: ['websocket', 'polling'] }); }
+    catch { return null; }
+  })());
 
   useEffect(() => {
     const newDeck = shuffleDeck(createDeck(6));
@@ -62,13 +72,28 @@ const TrainingMode: React.FC<TrainingModeProps> = ({ onBack }) => {
     const { action: correctAction, reason, analysis, example } = getCorrectAction(playerHand, dealerUpCard);
     const isCorrect = action === correctAction;
 
-    setStats(prev => ({
-      total: prev.total + 1,
-      correct: prev.correct + (isCorrect ? 1 : 0),
-      streak: isCorrect ? prev.streak + 1 : 0
-    }));
+    setStats(prev => {
+      const newStreak = isCorrect ? prev.streak + 1 : 0;
+      if (newStreak > bestStreakRef.current) bestStreakRef.current = newStreak;
+      return {
+        total: prev.total + 1,
+        correct: prev.correct + (isCorrect ? 1 : 0),
+        streak: newStreak
+      };
+    });
 
     playSound(isCorrect ? 'win' : 'loss');
+
+    // Send training result to server every 5 decisions
+    const token = getToken();
+    if (token && socketRef.current && (stats.total + 1) % 5 === 0) {
+      socketRef.current.emit('save-training-result', {
+        token,
+        total: 5,
+        correct: stats.correct + (isCorrect ? 1 : 0) - (stats.total >= 5 ? stats.correct : 0),
+        bestStreak: bestStreakRef.current,
+      });
+    }
 
     setGameResult({
       isCorrect,

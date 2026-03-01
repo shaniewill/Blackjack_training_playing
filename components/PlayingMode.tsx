@@ -1,11 +1,14 @@
 import React, { useState, useRef } from 'react';
+import { io } from 'socket.io-client';
 import Card from './Card';
 import { playSound, speak } from '../utils/sound';
 import { createDeck, shuffleDeck, calculateHandValue, isStrictPair } from '../utils/deck';
 import { Card as CardType, PlayerHand, GameState } from '../types';
+import { UserProfile, getToken } from '../utils/api';
 
 interface PlayingModeProps {
   onBack: () => void;
+  user?: UserProfile | null;
 }
 
 // ─── Helper: sync ref + state together ───────────────────────────────────────
@@ -13,7 +16,7 @@ interface PlayingModeProps {
 // handlers/async functions) AND React state (for re-renders).  We ONLY ever
 // read from refs inside handlers; state is only used for rendering.
 
-const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
+const PlayingMode: React.FC<PlayingModeProps> = ({ onBack, user }) => {
   // ── Deck ──────────────────────────────────────────────────────────────────
   const deckRef = useRef<CardType[]>(shuffleDeck(createDeck(6)));
 
@@ -46,10 +49,28 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
   // ── Chips & Betting ───────────────────────────────────────────────────────
   const STARTING_CHIPS = 1000;
   const CHIP_VALUES = [10, 25, 100, 500] as const;
-  const chipsRef = useRef<number>(STARTING_CHIPS);
-  const [chips, setChips] = useState<number>(STARTING_CHIPS);
+
+  // Restore chips: from user profile if logged in, else sessionStorage
+  const savedChips = (() => {
+    if (user && user.chips > 0) return user.chips;
+    const stored = sessionStorage.getItem('bj_sp_chips');
+    if (stored) {
+      const val = parseInt(stored, 10);
+      return isNaN(val) || val <= 0 ? STARTING_CHIPS : val;
+    }
+    return STARTING_CHIPS;
+  })();
+
+  const chipsRef = useRef<number>(savedChips);
+  const [chips, setChips] = useState<number>(savedChips);
   const currentBetRef = useRef<number>(0);
   const [currentBet, setCurrentBet] = useState<number>(0);
+
+  // Socket ref for sending results to server
+  const socketRef = useRef((() => {
+    try { return io(undefined as any, { transports: ['websocket', 'polling'] }); }
+    catch { return null; }
+  })());
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const syncDealerHand = (hand: CardType[]) => {
@@ -75,6 +96,7 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
   const syncChips = (val: number) => {
     chipsRef.current = val;
     setChips(val);
+    sessionStorage.setItem('bj_sp_chips', String(val));
   };
 
   const syncCurrentBet = (val: number) => {
@@ -275,6 +297,24 @@ const PlayingMode: React.FC<PlayingModeProps> = ({ onBack }) => {
     } else {
       playSound('push');
       setMessage('🤝 Push!');
+    }
+
+    // Record result to server if logged in
+    const token = getToken();
+    if (token && socketRef.current) {
+      const pushes = newHands.filter(h => h.result === 'push').length;
+      const blackjacks = newHands.filter(h => h.status === 'blackjack').length;
+      const chipsBefore = chipsRef.current - totalPayout + newHands.reduce((s, h) => s + h.bet, 0);
+      socketRef.current.emit('save-sp-result', {
+        token,
+        handsPlayed: newHands.length,
+        handsWon: wins,
+        handsLost: losses,
+        handsPushed: pushes,
+        blackjacks,
+        chipsDelta: chipsRef.current - chipsBefore,
+        totalChips: chipsRef.current,
+      });
     }
   };
 

@@ -7,16 +7,18 @@ interface MultiplayerLobbyProps {
     error: string | null;
     connected: boolean;
     onBack: () => void;
+    userName?: string;  // pre-filled from logged-in user
 }
 
 const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
-    onCreateRoom, onJoinRoom, roomCode, error, connected, onBack,
+    onCreateRoom, onJoinRoom, roomCode, error, connected, onBack, userName,
 }) => {
-    const [name, setName] = useState('');
+    const [name, setName] = useState(userName || '');
     const [code, setCode] = useState('');
     const [mode, setMode] = useState<'choose' | 'create' | 'join'>('choose');
 
     const nameValid = name.trim().length >= 1 && connected;
+    const isLoggedIn = !!userName;
 
     return (
         <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
@@ -33,18 +35,27 @@ const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                         title={connected ? 'Connected' : 'Connecting…'} />
                 </div>
 
-                {/* Name input — always visible */}
+                {/* Name — auto-filled badge for logged-in users, input for guests */}
                 <div className="mb-6">
-                    <label className="text-slate-400 text-xs uppercase tracking-widest mb-2 block">Your Name</label>
-                    <input
-                        type="text"
-                        value={name}
-                        onChange={e => setName(e.target.value)}
-                        placeholder="Enter your name"
-                        maxLength={16}
-                        className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-3 text-white text-lg
-              placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                    />
+                    {isLoggedIn ? (
+                        <div className="flex items-center gap-2 bg-slate-700/40 px-4 py-3 rounded-xl">
+                            <span className="text-slate-400 text-xs uppercase tracking-widest">Playing as</span>
+                            <span className="text-white font-bold">{name}</span>
+                        </div>
+                    ) : (
+                        <>
+                            <label className="text-slate-400 text-xs uppercase tracking-widest mb-2 block">Your Name</label>
+                            <input
+                                type="text"
+                                value={name}
+                                onChange={e => setName(e.target.value)}
+                                placeholder="Enter your name"
+                                maxLength={16}
+                                className="w-full bg-slate-700/60 border border-slate-600 rounded-xl px-4 py-3 text-white text-lg
+                  placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                            />
+                        </>
+                    )}
                 </div>
 
                 {error && (

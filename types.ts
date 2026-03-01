@@ -65,6 +65,7 @@ export type GameState = 'idle' | 'betting' | 'dealing' | 'player_turn' | 'dealer
 export type RoomPhase = 'lobby' | 'betting' | 'player_turns' | 'dealer_turn' | 'results';
 
 export interface SerializedPlayer {
+  playerId: string;
   socketId: string;
   name: string;
   chips: number;
@@ -72,6 +73,7 @@ export interface SerializedPlayer {
   currentBet: number;
   hasBet: boolean;
   isDone: boolean;
+  disconnected: boolean;
 }
 
 export interface SerializedRoom {

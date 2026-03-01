@@ -2,6 +2,8 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import cors from 'cors';
+import authRouter, { verifyToken } from './auth.js';
+import { recordGame, recordTraining, updateChips, findUserById } from './db.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Card {
@@ -20,25 +22,27 @@ interface PlayerHand {
 }
 
 interface RoomPlayer {
-    socketId: string;
+    playerId: string;      // stable UUID from client
+    socketId: string;      // current socket.id (changes on reconnect)
     name: string;
     chips: number;
     hands: PlayerHand[];
     currentBet: number;
     hasBet: boolean;
-    isDone: boolean; // all hands resolved for this round
+    isDone: boolean;
+    disconnected: boolean; // true during grace period
 }
 
 type RoomPhase = 'lobby' | 'betting' | 'player_turns' | 'dealer_turn' | 'results';
 
 interface Room {
     code: string;
-    hostId: string;
+    hostId: string;        // now stores playerId, not socket.id
     phase: RoomPhase;
-    players: Map<string, RoomPlayer>;
+    players: Map<string, RoomPlayer>; // keyed by playerId
     deck: Card[];
     dealerHand: Card[];
-    activePlayerId: string | null; // whose turn it is
+    activePlayerId: string | null; // playerId of whose turn it is
 }
 
 // ─── Deck helpers ─────────────────────────────────────────────────────────────
@@ -100,6 +104,11 @@ function drawCard(room: Room): Card {
 // ─── Room management ──────────────────────────────────────────────────────────
 const rooms = new Map<string, Room>();
 const STARTING_CHIPS = 1000;
+const DISCONNECT_GRACE_MS = 30_000; // 30 seconds
+
+// Reverse lookups
+const playerIdToRoomCode = new Map<string, string>();   // playerId → room code
+const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>(); // playerId → timer
 
 function generateCode(): string {
     let code: string;
@@ -109,15 +118,29 @@ function generateCode(): string {
     return code;
 }
 
+/** Find which playerId a socket belongs to */
+function findPlayerIdBySocket(socketId: string): { playerId: string; room: Room } | null {
+    for (const [_code, room] of rooms) {
+        for (const [pid, player] of room.players) {
+            if (player.socketId === socketId) {
+                return { playerId: pid, room };
+            }
+        }
+    }
+    return null;
+}
+
 function serializeRoom(room: Room) {
-    const players = Array.from(room.players.entries()).map(([sid, p]) => ({
-        socketId: sid,
+    const players = Array.from(room.players.entries()).map(([pid, p]) => ({
+        playerId: pid,
+        socketId: p.socketId,
         name: p.name,
         chips: p.chips,
         hands: p.hands,
         currentBet: p.currentBet,
         hasBet: p.hasBet,
         isDone: p.isDone,
+        disconnected: p.disconnected,
     }));
     return {
         code: room.code,
@@ -129,9 +152,40 @@ function serializeRoom(room: Room) {
     };
 }
 
+/** Remove a player permanently and handle cleanup */
+function removePlayer(playerId: string, room: Room) {
+    const wasActive = room.activePlayerId === playerId;
+    room.players.delete(playerId);
+    playerIdToRoomCode.delete(playerId);
+
+    if (room.players.size === 0) {
+        rooms.delete(room.code);
+        return;
+    }
+
+    // Transfer host if needed
+    if (room.hostId === playerId) {
+        // Prefer a connected player as host
+        const connectedPlayer = Array.from(room.players.values()).find(p => !p.disconnected);
+        room.hostId = connectedPlayer
+            ? connectedPlayer.playerId
+            : room.players.keys().next().value!;
+    }
+
+    io.to(room.code).emit('room-update', serializeRoom(room));
+
+    // If it was their turn, advance
+    if (wasActive && room.phase === 'player_turns') {
+        advanceToNextPlayer(room);
+        io.to(room.code).emit('room-update', serializeRoom(room));
+    }
+}
+
 // ─── Server setup ─────────────────────────────────────────────────────────────
 const app = express();
 app.use(cors());
+app.use(express.json());
+app.use(authRouter);
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: { origin: '*', methods: ['GET', 'POST'] },
@@ -144,18 +198,19 @@ io.on('connection', (socket: Socket) => {
     console.log(`[connect] ${socket.id}`);
 
     // ── Create Room ──
-    socket.on('create-room', ({ name }: { name: string }) => {
+    socket.on('create-room', ({ name, playerId }: { name: string; playerId: string }) => {
         const code = generateCode();
         const room: Room = {
             code,
-            hostId: socket.id,
+            hostId: playerId,
             phase: 'lobby',
             players: new Map(),
             deck: shuffleDeck(createDeck(6)),
             dealerHand: [],
             activePlayerId: null,
         };
-        room.players.set(socket.id, {
+        room.players.set(playerId, {
+            playerId,
             socketId: socket.id,
             name,
             chips: STARTING_CHIPS,
@@ -163,21 +218,25 @@ io.on('connection', (socket: Socket) => {
             currentBet: 0,
             hasBet: false,
             isDone: false,
+            disconnected: false,
         });
         rooms.set(code, room);
+        playerIdToRoomCode.set(playerId, code);
         socket.join(code);
         socket.emit('room-created', { code });
         io.to(code).emit('room-update', serializeRoom(room));
     });
 
     // ── Join Room ──
-    socket.on('join-room', ({ code, name }: { code: string; name: string }) => {
+    socket.on('join-room', ({ code, name, playerId }: { code: string; name: string; playerId: string }) => {
         const room = rooms.get(code);
         if (!room) { socket.emit('error-msg', 'Room not found'); return; }
         if (room.phase !== 'lobby') { socket.emit('error-msg', 'Game already in progress'); return; }
         if (room.players.size >= 7) { socket.emit('error-msg', 'Room is full (max 7)'); return; }
+        if (room.players.has(playerId)) { socket.emit('error-msg', 'Already in this room'); return; }
 
-        room.players.set(socket.id, {
+        room.players.set(playerId, {
+            playerId,
             socketId: socket.id,
             name,
             chips: STARTING_CHIPS,
@@ -185,16 +244,51 @@ io.on('connection', (socket: Socket) => {
             currentBet: 0,
             hasBet: false,
             isDone: false,
+            disconnected: false,
         });
+        playerIdToRoomCode.set(playerId, code);
         socket.join(code);
         socket.emit('room-joined', { code });
+        io.to(code).emit('room-update', serializeRoom(room));
+    });
+
+    // ── Rejoin Room (reconnect after refresh/disconnect) ──
+    socket.on('rejoin-room', ({ playerId, code }: { playerId: string; code: string }) => {
+        const room = rooms.get(code);
+        if (!room) {
+            socket.emit('rejoin-failed', 'Room no longer exists');
+            return;
+        }
+
+        const player = room.players.get(playerId);
+        if (!player) {
+            socket.emit('rejoin-failed', 'You are no longer in this room');
+            return;
+        }
+
+        // Clear any pending disconnect timer
+        const timer = disconnectTimers.get(playerId);
+        if (timer) {
+            clearTimeout(timer);
+            disconnectTimers.delete(playerId);
+        }
+
+        // Update socket reference
+        player.socketId = socket.id;
+        player.disconnected = false;
+
+        socket.join(code);
+        console.log(`[rejoin] ${player.name} (${playerId}) rejoined room ${code}`);
+
+        socket.emit('rejoin-success', { code });
         io.to(code).emit('room-update', serializeRoom(room));
     });
 
     // ── Start Game (host only) ──
     socket.on('start-game', ({ code }: { code: string }) => {
         const room = rooms.get(code);
-        if (!room || room.hostId !== socket.id) return;
+        const found = findPlayerIdBySocket(socket.id);
+        if (!room || !found || room.hostId !== found.playerId) return;
         if (room.players.size < 1) return;
 
         room.phase = 'betting';
@@ -212,7 +306,9 @@ io.on('connection', (socket: Socket) => {
     socket.on('place-bet', ({ code, amount }: { code: string; amount: number }) => {
         const room = rooms.get(code);
         if (!room || room.phase !== 'betting') return;
-        const player = room.players.get(socket.id);
+        const found = findPlayerIdBySocket(socket.id);
+        if (!found) return;
+        const player = room.players.get(found.playerId);
         if (!player || player.hasBet) return;
         if (amount <= 0 || amount > player.chips) return;
 
@@ -222,8 +318,8 @@ io.on('connection', (socket: Socket) => {
 
         io.to(code).emit('room-update', serializeRoom(room));
 
-        // Check if all players have bet
-        const allBet = Array.from(room.players.values()).every(p => p.hasBet);
+        // Check if all connected players have bet
+        const allBet = Array.from(room.players.values()).every(p => p.hasBet || p.disconnected);
         if (allBet) {
             dealRound(room);
         }
@@ -233,8 +329,9 @@ io.on('connection', (socket: Socket) => {
     socket.on('player-action', ({ code, action, handIndex }: { code: string; action: string; handIndex?: number }) => {
         const room = rooms.get(code);
         if (!room || room.phase !== 'player_turns') return;
-        if (room.activePlayerId !== socket.id) return;
-        const player = room.players.get(socket.id);
+        const found = findPlayerIdBySocket(socket.id);
+        if (!found || room.activePlayerId !== found.playerId) return;
+        const player = room.players.get(found.playerId);
         if (!player) return;
 
         const hi = handIndex ?? 0;
@@ -260,7 +357,15 @@ io.on('connection', (socket: Socket) => {
     // ── Next Round (host) ──
     socket.on('next-round', ({ code }: { code: string }) => {
         const room = rooms.get(code);
-        if (!room || room.hostId !== socket.id) return;
+        const found = findPlayerIdBySocket(socket.id);
+        if (!room || !found || room.hostId !== found.playerId) return;
+
+        // Remove any players still disconnected at round boundary
+        for (const [pid, p] of room.players) {
+            if (p.disconnected) {
+                removePlayer(pid, room);
+            }
+        }
 
         room.phase = 'betting';
         room.dealerHand = [];
@@ -274,29 +379,78 @@ io.on('connection', (socket: Socket) => {
         io.to(code).emit('room-update', serializeRoom(room));
     });
 
-    // ── Disconnect ──
+    // ── Save single-player round result (logged-in users) ──
+    socket.on('save-sp-result', (data: {
+        token: string;
+        handsPlayed: number; handsWon: number; handsLost: number;
+        handsPushed: number; blackjacks: number; chipsDelta: number; totalChips: number;
+    }) => {
+        const payload = verifyToken(data.token);
+        if (!payload) return;
+        recordGame(payload.userId, 'playing', data.handsPlayed, data.handsWon,
+            data.handsLost, data.handsPushed, data.blackjacks, data.chipsDelta);
+        updateChips(payload.userId, data.totalChips);
+    });
+
+    // ── Save training result (logged-in users) ──
+    socket.on('save-training-result', (data: {
+        token: string; total: number; correct: number; bestStreak: number;
+    }) => {
+        const payload = verifyToken(data.token);
+        if (!payload) return;
+        recordTraining(payload.userId, data.total, data.correct, data.bestStreak);
+    });
+
+    // ── Sync chips to server (logged-in users) ──
+    socket.on('sync-chips', (data: { token: string; chips: number }) => {
+        const payload = verifyToken(data.token);
+        if (!payload) return;
+        updateChips(payload.userId, data.chips);
+    });
+
+    // ── Disconnect (grace period) ──
     socket.on('disconnect', () => {
         console.log(`[disconnect] ${socket.id}`);
-        for (const [code, room] of rooms) {
-            if (room.players.has(socket.id)) {
-                room.players.delete(socket.id);
-                if (room.players.size === 0) {
-                    rooms.delete(code);
-                } else {
-                    // Transfer host if needed
-                    if (room.hostId === socket.id) {
-                        room.hostId = room.players.keys().next().value!;
-                    }
-                    io.to(code).emit('room-update', serializeRoom(room));
+        const found = findPlayerIdBySocket(socket.id);
+        if (!found) return;
 
-                    // If in player_turns and this was the active player, advance
-                    if (room.phase === 'player_turns' && room.activePlayerId === socket.id) {
-                        advanceToNextPlayer(room);
-                        io.to(code).emit('room-update', serializeRoom(room));
+        const { playerId, room } = found;
+        const player = room.players.get(playerId);
+        if (!player) return;
+
+        player.disconnected = true;
+        io.to(room.code).emit('room-update', serializeRoom(room));
+        console.log(`[grace] ${player.name} has ${DISCONNECT_GRACE_MS / 1000}s to reconnect`);
+
+        // If it was their turn during player_turns, auto-stand after 5s
+        if (room.phase === 'player_turns' && room.activePlayerId === playerId) {
+            setTimeout(() => {
+                const p = room.players.get(playerId);
+                if (p && p.disconnected && room.activePlayerId === playerId) {
+                    // Auto-stand all playing hands
+                    for (const hand of p.hands) {
+                        if (hand.status === 'playing') hand.status = 'standing';
                     }
+                    p.isDone = true;
+                    advanceToNextPlayer(room);
+                    io.to(room.code).emit('room-update', serializeRoom(room));
                 }
-            }
+            }, 5000);
         }
+
+        // Start grace period timer
+        const timer = setTimeout(() => {
+            disconnectTimers.delete(playerId);
+            const currentRoom = rooms.get(room.code);
+            if (!currentRoom) return;
+            const currentPlayer = currentRoom.players.get(playerId);
+            if (!currentPlayer || !currentPlayer.disconnected) return;
+
+            console.log(`[timeout] Removing ${currentPlayer.name} after grace period`);
+            removePlayer(playerId, currentRoom);
+        }, DISCONNECT_GRACE_MS);
+
+        disconnectTimers.set(playerId, timer);
     });
 });
 
@@ -305,8 +459,10 @@ io.on('connection', (socket: Socket) => {
 function dealRound(room: Room) {
     room.phase = 'player_turns';
 
-    // Deal 2 cards to each player
-    const playerIds = Array.from(room.players.keys());
+    // Deal 2 cards to each connected player
+    const playerIds = Array.from(room.players.keys()).filter(
+        pid => !room.players.get(pid)!.disconnected
+    );
     for (const pid of playerIds) {
         const p = room.players.get(pid)!;
         const c1 = drawCard(room);
@@ -396,13 +552,13 @@ function handleSplit(room: Room, player: RoomPlayer, hi: number) {
 
     const [c1, c2] = hand.cards;
     const hand1: PlayerHand = {
-        id: `hand-${player.socketId}-${Date.now()}-1`,
+        id: `hand-${player.playerId}-${Date.now()}-1`,
         cards: [c1, drawCard(room)],
         bet: hand.bet,
         status: 'playing',
     };
     const hand2: PlayerHand = {
-        id: `hand-${player.socketId}-${Date.now()}-2`,
+        id: `hand-${player.playerId}-${Date.now()}-2`,
         cards: [c2, drawCard(room)],
         bet: hand.bet,
         status: 'playing',
@@ -422,7 +578,7 @@ function advanceToNextPlayer(room: Room) {
     const currentIdx = playerIds.indexOf(room.activePlayerId ?? '');
     for (let i = currentIdx + 1; i < playerIds.length; i++) {
         const p = room.players.get(playerIds[i])!;
-        if (!p.isDone) {
+        if (!p.isDone && !p.disconnected) {
             room.activePlayerId = playerIds[i];
             io.to(room.code).emit('room-update', serializeRoom(room));
             return;

@@ -5,9 +5,11 @@ import MultiplayerLobby from './MultiplayerLobby';
 import { playSound, speak } from '../utils/sound';
 import { calculateHandValue, isStrictPair } from '../utils/deck';
 import { SerializedRoom, SerializedPlayer, Card as CardType } from '../types';
+import { UserProfile } from '../utils/api';
 
 interface MultiplayerModeProps {
     onBack: () => void;
+    user?: UserProfile | null;
 }
 
 const CHIP_VALUES = [10, 25, 100, 500] as const;
@@ -15,15 +17,53 @@ const CHIP_VALUES = [10, 25, 100, 500] as const;
 // In production, set VITE_MP_SERVER to the deployed server URL.
 const SERVER_URL = (import.meta as any).env?.VITE_MP_SERVER ?? '';
 
-const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
+// ── Session helpers ──────────────────────────────────────────────────────────
+function generateUUID(): string {
+    // crypto.randomUUID() requires HTTPS; this works over plain HTTP (local network)
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+}
+
+function getOrCreatePlayerId(): string {
+    let id = sessionStorage.getItem('bj_playerId');
+    if (!id) {
+        id = generateUUID();
+        sessionStorage.setItem('bj_playerId', id);
+    }
+    return id;
+}
+
+function saveSession(roomCode: string, playerName: string) {
+    sessionStorage.setItem('bj_roomCode', roomCode);
+    sessionStorage.setItem('bj_playerName', playerName);
+}
+
+function getSession() {
+    return {
+        roomCode: sessionStorage.getItem('bj_roomCode'),
+        playerName: sessionStorage.getItem('bj_playerName'),
+    };
+}
+
+function clearSession() {
+    sessionStorage.removeItem('bj_roomCode');
+    sessionStorage.removeItem('bj_playerName');
+}
+
+const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack, user }) => {
     const socketRef = useRef<Socket | null>(null);
     const [connected, setConnected] = useState(false);
     const [room, setRoom] = useState<SerializedRoom | null>(null);
     const [roomCode, setRoomCode] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [betAmount, setBetAmount] = useState(0);
-    const [myId, setMyId] = useState<string | null>(null);
     const [message, setMessage] = useState('');
+    const [rejoining, setRejoining] = useState(false);
+
+    // Stable player identity
+    const myPlayerId = useRef(getOrCreatePlayerId()).current;
 
     // Deal animation state: -1 = no animation, 0+ = current step in reveal sequence
     const [dealStep, setDealStep] = useState(-1);
@@ -36,20 +76,41 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
 
         socket.on('connect', () => {
             setConnected(true);
-            setMyId(socket.id ?? null);
             setError(null);
+
+            // Attempt auto-rejoin from session
+            const session = getSession();
+            if (session.roomCode) {
+                setRejoining(true);
+                socket.emit('rejoin-room', { playerId: myPlayerId, code: session.roomCode });
+            }
         });
         socket.on('disconnect', () => setConnected(false));
         socket.on('connect_error', () => {
             setError('Cannot connect to server. Check your network.');
         });
-        socket.on('room-created', ({ code }: { code: string }) => setRoomCode(code));
-        socket.on('room-joined', ({ code }: { code: string }) => setRoomCode(code));
+
+        socket.on('room-created', ({ code }: { code: string }) => {
+            setRoomCode(code);
+        });
+        socket.on('room-joined', ({ code }: { code: string }) => {
+            setRoomCode(code);
+        });
         socket.on('room-update', (data: SerializedRoom) => setRoom(data));
         socket.on('error-msg', (msg: string) => setError(msg));
 
+        // Rejoin results
+        socket.on('rejoin-success', ({ code }: { code: string }) => {
+            setRoomCode(code);
+            setRejoining(false);
+        });
+        socket.on('rejoin-failed', (_msg: string) => {
+            clearSession();
+            setRejoining(false);
+        });
+
         return () => { socket.disconnect(); };
-    }, []);
+    }, [myPlayerId]);
 
     // ── Sound effects based on phase transitions + deal animation ──
     const prevPhaseRef = useRef<string | null>(null);
@@ -62,7 +123,8 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
         if (prev !== room.phase) {
             // Initial deal → start card-by-card animation
             if (room.phase === 'player_turns' && prev === 'betting') {
-                const totalSteps = room.players.length * 2 + 2; // 2 cards per player + 2 dealer
+                const connectedPlayers = room.players.filter(p => !p.disconnected);
+                const totalSteps = connectedPlayers.length * 2 + 2; // 2 cards per player + 2 dealer
                 setDealStep(0);
                 let step = 0;
                 if (dealTimerRef.current) clearInterval(dealTimerRef.current);
@@ -73,7 +135,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                         dealTimerRef.current = null;
                         setDealStep(-1);
                         // Announce only my total after deal completes
-                        const mePlayer = room.players.find(p => p.socketId === myId);
+                        const mePlayer = room.players.find(p => p.playerId === myPlayerId);
                         if (mePlayer && mePlayer.hands[0]?.cards.length >= 2) {
                             const { total } = calculateHandValue(mePlayer.hands[0].cards);
                             if (total === 21) {
@@ -95,7 +157,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                 speak(`${dTotal}`, 1.3, 1.0);
             }
             if (room.phase === 'results') {
-                const me = room.players.find(p => p.socketId === myId);
+                const me = room.players.find(p => p.playerId === myPlayerId);
                 if (me) {
                     const wins = me.hands.filter(h => h.result === 'win').length;
                     const losses = me.hands.filter(h => h.result === 'loss').length;
@@ -110,10 +172,10 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
         }
 
         // Announce when active player changes to someone else
-        if (room.phase === 'player_turns' && room.activePlayerId && room.activePlayerId !== myId) {
+        if (room.phase === 'player_turns' && room.activePlayerId && room.activePlayerId !== myPlayerId) {
             const prevActive = prevActiveRef.current;
             if (room.activePlayerId !== prevActive) {
-                const activePlayer = room.players.find(p => p.socketId === room.activePlayerId);
+                const activePlayer = room.players.find(p => p.playerId === room.activePlayerId);
                 if (activePlayer && activePlayer.hands.length > 0) {
                     const { total } = calculateHandValue(activePlayer.hands[0].cards);
                     speak(`${activePlayer.name}, ${total}`, 1.0, 1.0);
@@ -125,7 +187,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
         return () => {
             if (dealTimerRef.current) clearInterval(dealTimerRef.current);
         };
-    }, [room, myId]);
+    }, [room, myPlayerId]);
 
     // Helper: compute deal order index for a given card
     // Real blackjack order: round 1 (card 0) to all players then dealer, round 2 (card 1) to all players then dealer
@@ -146,7 +208,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
             // Still update counts so we don't false-trigger after animation ends
             const newCounts: Record<string, number> = {};
             for (const player of room.players) {
-                newCounts[player.socketId] = player.hands.reduce((sum, h) => sum + h.cards.length, 0);
+                newCounts[player.playerId] = player.hands.reduce((sum, h) => sum + h.cards.length, 0);
             }
             newCounts['__dealer__'] = room.dealerHand.length;
             prevCardCountsRef.current = newCounts;
@@ -160,9 +222,9 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
         // Check each player's hands
         for (const player of room.players) {
             const totalCards = player.hands.reduce((sum, h) => sum + h.cards.length, 0);
-            newCounts[player.socketId] = totalCards;
+            newCounts[player.playerId] = totalCards;
 
-            if (prev[player.socketId] !== undefined && totalCards > prev[player.socketId]) {
+            if (prev[player.playerId] !== undefined && totalCards > prev[player.playerId]) {
                 for (const hand of player.hands) {
                     if (hand.cards.length > 0) {
                         const { total } = calculateHandValue(hand.cards);
@@ -198,7 +260,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
         announcements.forEach(({ text, rate, pitch }, i) => {
             setTimeout(() => speak(text, rate, pitch), i * 700);
         });
-    }, [room, myId, dealStep]);
+    }, [room, myPlayerId, dealStep]);
 
     // ── Actions ──
     const emit = useCallback((event: string, data: Record<string, unknown>) => {
@@ -207,13 +269,23 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
 
     const handleCreateRoom = (name: string) => {
         setError(null);
-        emit('create-room', { name });
+        saveSession('', name); // save name now, code comes from server
+        emit('create-room', { name, playerId: myPlayerId });
     };
 
     const handleJoinRoom = (name: string, code: string) => {
         setError(null);
-        emit('join-room', { code, name });
+        saveSession(code, name);
+        emit('join-room', { code, name, playerId: myPlayerId });
     };
+
+    // Save room code when we get it from server
+    useEffect(() => {
+        if (roomCode) {
+            const session = getSession();
+            saveSession(roomCode, session.playerName ?? '');
+        }
+    }, [roomCode]);
 
     const handleStartGame = () => {
         if (!roomCode) return;
@@ -239,9 +311,23 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
     };
 
     const handleLeave = () => {
+        clearSession();
         socketRef.current?.disconnect();
         onBack();
     };
+
+    // ── Reconnecting overlay ──
+    if (rejoining) {
+        return (
+            <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
+                <div className="max-w-md w-full bg-slate-800/80 backdrop-blur-md p-8 rounded-3xl shadow-2xl border border-slate-700 text-center">
+                    <div className="text-4xl mb-4 animate-pulse">🔄</div>
+                    <h2 className="text-xl font-bold text-white mb-2">Reconnecting…</h2>
+                    <p className="text-slate-400 text-sm">Rejoining your game session</p>
+                </div>
+            </div>
+        );
+    }
 
     // ── Loading / Lobby ──
     if (!room) {
@@ -253,14 +339,16 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                 error={error}
                 connected={connected}
                 onBack={handleLeave}
+                userName={user?.display_name}
             />
         );
     }
 
     // ── Derived state ──
-    const me = room.players.find(p => p.socketId === myId);
-    const isHost = room.hostId === myId;
-    const isMyTurn = room.activePlayerId === myId;
+    const me = room.players.find(p => p.playerId === myPlayerId);
+    const isHost = room.hostId === myPlayerId;
+    const isMyTurn = room.activePlayerId === myPlayerId;
+    const connectedPlayers = room.players.filter(p => !p.disconnected);
     const dealerTotal = room.dealerHand.length > 0 ? calculateHandValue(room.dealerHand).total : 0;
     const dealerUpTotal = room.dealerHand.length > 0 ? calculateHandValue([room.dealerHand[0]]).total : 0;
     const showDealerHole = room.phase !== 'player_turns';
@@ -282,15 +370,18 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                         <div className="text-slate-400 text-xs uppercase tracking-widest mb-3">Players ({room.players.length})</div>
                         <div className="space-y-2">
                             {room.players.map(p => (
-                                <div key={p.socketId} className="flex items-center justify-between bg-slate-700/40 px-4 py-3 rounded-xl">
+                                <div key={p.playerId} className="flex items-center justify-between bg-slate-700/40 px-4 py-3 rounded-xl">
                                     <div className="flex items-center gap-3">
-                                        <div className={`w-3 h-3 rounded-full ${p.socketId === room.hostId ? 'bg-amber-400' : 'bg-emerald-400'}`} />
-                                        <span className="text-white font-medium">{p.name}</span>
-                                        {p.socketId === room.hostId && (
+                                        <div className={`w-3 h-3 rounded-full ${p.disconnected ? 'bg-red-400 animate-pulse' : p.playerId === room.hostId ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+                                        <span className={`text-white font-medium ${p.disconnected ? 'opacity-50' : ''}`}>{p.name}</span>
+                                        {p.playerId === room.hostId && (
                                             <span className="text-amber-400 text-xs font-bold uppercase">Host</span>
                                         )}
-                                        {p.socketId === myId && (
+                                        {p.playerId === myPlayerId && (
                                             <span className="text-blue-400 text-xs font-bold uppercase">You</span>
+                                        )}
+                                        {p.disconnected && (
+                                            <span className="text-red-400 text-xs font-bold uppercase animate-pulse">Offline</span>
                                         )}
                                     </div>
                                     <span className="text-slate-400 font-mono text-sm">💰 {p.chips}</span>
@@ -370,7 +461,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                         <div className="flex gap-1 flex-wrap justify-center min-h-[72px] sm:min-h-[80px] items-center">
                             {room.dealerHand.map((card, i) => {
                                 // During deal animation, check if this dealer card should be visible
-                                const dealOrder = getDealerDealOrder(i, room.players.length);
+                                const dealOrder = getDealerDealOrder(i, connectedPlayers.length);
                                 const isHidden = dealStep >= 0 && dealOrder > dealStep;
                                 const justDealt = dealStep >= 0 && dealOrder === dealStep;
                                 return (
@@ -462,19 +553,20 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                 {/* ── All Player Hands ── */}
                 {(room.phase === 'player_turns' || room.phase === 'dealer_turn' || room.phase === 'results') && (
                     <div className="flex flex-wrap gap-3 sm:gap-4 justify-center">
-                        {room.players.map(player => {
-                            const isMe = player.socketId === myId;
-                            const isActive = room.activePlayerId === player.socketId && room.phase === 'player_turns';
+                        {room.players.filter(p => !p.disconnected || p.hands.length > 0).map(player => {
+                            const isMe = player.playerId === myPlayerId;
+                            const isActive = room.activePlayerId === player.playerId && room.phase === 'player_turns';
 
                             return (
                                 <div
-                                    key={player.socketId}
+                                    key={player.playerId}
                                     className={`flex flex-col items-center rounded-2xl p-3 sm:p-4 border-2 transition-all w-[260px] sm:w-[420px] min-h-[180px] sm:min-h-[300px] relative
                     ${isMe
                                             ? 'bg-blue-950/60 border-blue-400 shadow-[0_0_20px_rgba(96,165,250,0.4),0_0_40px_rgba(96,165,250,0.15)] ring-2 ring-blue-400/50 border-[3px]'
                                             : 'bg-slate-800/50 border-slate-700/50'}
                     ${isActive && !isMe ? 'border-amber-500 shadow-lg shadow-amber-500/20' : ''}
                     ${isActive && isMe ? 'border-blue-300 shadow-[0_0_25px_rgba(96,165,250,0.5)]' : ''}
+                    ${player.disconnected ? 'opacity-50' : ''}
                   `}
                                 >
                                     {/* Player name + chips */}
@@ -482,6 +574,9 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                                         <span className={`font-bold text-sm ${isMe ? 'text-blue-300' : 'text-slate-300'}`}>
                                             {player.name}
                                         </span>
+                                        {player.disconnected && (
+                                            <span className="text-red-400 text-[10px] font-bold uppercase animate-pulse">Offline</span>
+                                        )}
                                         {isActive && (
                                             <span className={`w-2.5 h-2.5 rounded-full animate-bounce ${isMe ? 'bg-blue-400' : 'bg-amber-400'}`} />
                                         )}
@@ -497,8 +592,8 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                                             <div key={hand.id} className="flex flex-col items-center mb-2">
                                                 <div className="flex relative min-h-[80px] sm:min-h-[88px] items-start">
                                                     {hand.cards.map((card, ci) => {
-                                                        const playerIdx = room.players.findIndex(p => p.socketId === player.socketId);
-                                                        const dealOrder = getDealOrderIndex(playerIdx, ci, room.players.length);
+                                                        const playerIdx = connectedPlayers.findIndex(p => p.playerId === player.playerId);
+                                                        const dealOrder = getDealOrderIndex(playerIdx, ci, connectedPlayers.length);
                                                         const isHidden = dealStep >= 0 && ci < 2 && dealOrder > dealStep;
                                                         const justDealt = dealStep >= 0 && ci < 2 && dealOrder === dealStep;
                                                         return (
@@ -515,8 +610,8 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                                                 {(() => {
                                                     // During deal animation, check if all initial cards are visible
                                                     if (dealStep >= 0) {
-                                                        const playerIdx = room.players.findIndex(p => p.socketId === player.socketId);
-                                                        const lastCardOrder = getDealOrderIndex(playerIdx, 1, room.players.length);
+                                                        const playerIdx = connectedPlayers.findIndex(p => p.playerId === player.playerId);
+                                                        const lastCardOrder = getDealOrderIndex(playerIdx, 1, connectedPlayers.length);
                                                         if (dealStep < lastCardOrder) return null;
                                                     }
                                                     return (
@@ -541,7 +636,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                                                 {/* Action buttons — only for my active hand */}
                                                 {isMe && isMyTurn && hand.status === 'playing' && room.phase === 'player_turns' && (
                                                     <div className="flex gap-3 sm:gap-4 mt-3 justify-center">
-                                                        {hand.cards.length === 2 && me.chips >= hand.bet && (
+                                                        {hand.cards.length === 2 && me!.chips >= hand.bet && (
                                                             <button onClick={() => handleAction('double', hi)} className="flex flex-col items-center gap-1">
                                                                 <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-yellow-500 hover:bg-yellow-400 active:scale-90 flex items-center justify-center shadow-lg transition-all">
                                                                     <span className="text-white font-black text-lg sm:text-xl">×2</span>
@@ -561,7 +656,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                                                             </div>
                                                             <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase">Stand</span>
                                                         </button>
-                                                        {isStrictPair(hand.cards) && player.hands.length < 4 && me.chips >= hand.bet && (
+                                                        {isStrictPair(hand.cards) && player.hands.length < 4 && me!.chips >= hand.bet && (
                                                             <button onClick={() => handleAction('split', hi)} className="flex flex-col items-center gap-1">
                                                                 <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-purple-500 hover:bg-purple-400 active:scale-90 flex items-center justify-center shadow-lg transition-all">
                                                                     <span className="text-white font-black text-lg sm:text-xl">↔</span>
@@ -584,7 +679,7 @@ const MultiplayerMode: React.FC<MultiplayerModeProps> = ({ onBack }) => {
                 {room.phase === 'player_turns' && !isMyTurn && (
                     <div className="text-center text-slate-400 text-sm animate-pulse mt-4">
                         {(() => {
-                            const active = room.players.find(p => p.socketId === room.activePlayerId);
+                            const active = room.players.find(p => p.playerId === room.activePlayerId);
                             return active ? `Waiting for ${active.name} to play…` : 'Waiting…';
                         })()}
                     </div>
